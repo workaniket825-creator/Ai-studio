@@ -1,0 +1,150 @@
+# TCS AI Studio — full-stack container deployment.
+# `docker compose up --build` brings up: frontend (nginx) + backend (FastAPI) +
+# Postgres (pgvector-ready) + MLflow. All state persists via named volumes.
+#
+# The app uses its local JSON document store (persisted at the backend_data volume);
+# Postgres runs alongside (persisted) and is pgvector-capable for future RAG/semantic
+# ontology work. MLflow persists its SQLite tracking DB + artifacts.
+services:
+  frontend:
+    build: ../frontend
+    ports: ["8080:80"]          # open the app at http://localhost:8080
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backend:
+    build: ../backend
+    environment:
+      - RUNTIME=${RUNTIME:-live}                       # live | adk
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8080}
+      # --- persistence backend: postgres (professional) with JSON fallback available ---
+      - STORE_BACKEND=${STORE_BACKEND:-postgres}        # postgres | json
+      - COMPOSE_ENV_FILE=/app/infra/.env                # where the UI writes the Jupyter MCP target
+      - DATABASE_URL=${DATABASE_URL:-postgresql://studio:studio@postgres:5432/studio}
+      - DB_POOL_MIN=${DB_POOL_MIN:-1}
+      - DB_POOL_MAX=${DB_POOL_MAX:-10}
+      # model keys are normally set in the UI (Model Endpoints); env fallback optional:
+      - MODEL_PROVIDER=${MODEL_PROVIDER:-}
+      - AZURE_API_KEY=${AZURE_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"             # reach a Jupyter running outside the container
+    volumes:
+      - backend_data:/app/data                          # file storage + JSON fallback persist here
+      - ./.env:/app/infra/.env                          # Jupyter MCP target, editable from the UI
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0) if urllib.request.urlopen('http://localhost:8099/api/v1/health').status==200 else sys.exit(1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  postgres:
+    image: pgvector/pgvector:pg16                        # Postgres 16 + pgvector (RAG-ready)
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-studio}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-studio}
+      - POSTGRES_DB=${POSTGRES_DB:-studio}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-studio}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts
+    volumes:
+      - mlflow_data:/mlflow                              # tracking DB + artifacts persist here
+    ports: ["5000:5000"]                                 # MLflow UI
+    restart: unless-stopped
+
+  # Apache Superset — dashboards & analytics, embedded in the platform UI (Apache-2.0)
+  superset:
+    image: apache/superset:4.1.1
+    environment:
+      - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY:-change-me-in-prod-please-32chars-min}
+      - TALISMAN_ENABLED=false                 # allow same-origin iframe embedding behind nginx
+      - SUPERSET_LOAD_EXAMPLES=no
+    ports:
+      - "8088:8088"
+    volumes:
+      - superset_home:/app/superset_home
+    # First boot: init db, create admin, then run. (Idempotent on restart.)
+    command: >
+      bash -c "pip install psycopg2-binary >/dev/null 2>&1;
+               superset db upgrade &&
+               superset fab create-admin --username admin --firstname Admin --lastname User
+                 --email admin@local --password ${SUPERSET_ADMIN_PASSWORD:-admin} || true;
+               superset init &&
+               gunicorn --bind 0.0.0.0:8088 --workers 2 --timeout 120 'superset.app:create_app()'"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 90s
+    restart: unless-stopped
+
+  # Superset MCP server — exposes Superset's REST API as MCP tools for agents (streamable-http)
+  superset-mcp:
+    image: python:3.12-slim
+    environment:
+      - SUPERSET_BASE_URL=http://superset:8088
+      - SUPERSET_USERNAME=admin
+      - SUPERSET_PASSWORD=${SUPERSET_ADMIN_PASSWORD:-admin}
+      - MCP_TRANSPORT=streamable-http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8008
+    command: >
+      bash -c "pip install --no-cache-dir superset-mcp >/dev/null 2>&1 || pip install --no-cache-dir mcp-server-superset >/dev/null 2>&1;
+               python -m superset_mcp || echo 'superset-mcp not available in this image — install the server package'"
+    depends_on:
+      superset:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Jupyter MCP server — runs once, listens on :4040 (streamable-HTTP). It carries NO Jupyter
+  # URL/token: those are set from the UI at runtime via `jupyter-mcp-server connect`, so the
+  # Jupyter IP/port/token never require a rebuild. extra_hosts lets it reach a Jupyter running
+  # OUTSIDE the container (on the VM host) as host.docker.internal.
+  jupyter-mcp:
+    # Official prebuilt image — all native deps baked in (no runtime pip, no slim build failure).
+    image: datalayer/jupyter-mcp-server:latest
+    environment:
+      # Jupyter target comes from infra/.env (written by the UI "Save & Connect" action, then
+      # applied with: docker compose up -d jupyter-mcp). Empty token = Option 3 (no auth).
+      - JUPYTER_URL=${JUPYTER_URL:-http://host.docker.internal:8888}
+      - JUPYTER_TOKEN=${JUPYTER_TOKEN:-}
+      - TRANSPORT=streamable-http
+      - PORT=4040
+      - JUPYTERLAB=true
+      - START_NEW_RUNTIME=false
+      - INSECURE_MCP_NOAUTH=true                         # internal compose network only
+      - ALLOWED_JUPYTER_MCP_TOOLS=${ALLOWED_JUPYTER_MCP_TOOLS:-notebook_run-all-cells,notebook_run-cell,insert_cell,read_cell,read_all_cells,list_notebooks,append_execute_code_cell}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"             # reach a Jupyter running outside the container
+    ports:
+      - "4040:4040"
+    restart: unless-stopped
+
+volumes:
+  backend_data:
+  pgdata:
+  mlflow_data:
+  superset_home:

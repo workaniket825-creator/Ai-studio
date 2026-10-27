@@ -1,0 +1,60 @@
+name: security
+
+# Continuous dependency vulnerability + license scanning.
+# Runs on every push/PR and on a weekly schedule so newly-disclosed CVEs surface
+# even when nothing changed. Starts NON-BLOCKING (reports but doesn't fail the build)
+# via continue-on-error — flip those to false once you've triaged the initial output.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1"   # Mondays 06:00 UTC — catch CVEs disclosed over the week
+  workflow_dispatch: {}
+
+jobs:
+  python-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Audit backend dependencies (known CVEs)
+        continue-on-error: true          # set to false to make findings block the build
+        run: pip-audit -r backend/requirements.txt --desc
+
+  node-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm install --no-audit --no-fund
+      - name: Audit frontend dependencies (known CVEs)
+        continue-on-error: true          # set to false to block on high/critical
+        working-directory: frontend
+        run: npm audit --audit-level=high
+
+  license-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Enforce permissive-only Python licenses
+        continue-on-error: true          # set to false to enforce strictly
+        run: |
+          pip install pip-licenses
+          pip install -r backend/requirements.txt
+          # Fail if a copyleft/strong license slips into the shipped backend deps.
+          # (paramiko/LGPL lives only in the optional, non-shipped DSL SSH path.)
+          pip-licenses --format=csv --with-urls \
+            --fail-on "GPL;AGPL;SSPL;LGPL;MPL;EPL;CC-BY-SA"
