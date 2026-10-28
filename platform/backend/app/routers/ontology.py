@@ -339,18 +339,28 @@ def export_graph(gid: str, source: str = "published"):
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
-@router.post("/graphs/import")
-async def import_graph(file: UploadFile = File(...), publish: bool = True, name: str = ""):
+def _run_import(payload, publish: bool = True, name: str = "", keep_scoping: bool = False) -> dict:
+    """Shared by both import routes: invalid documents -> 400 with a readable reason,
+    anything unexpected -> 500 with a message (never a bare 'Internal Server Error')."""
     from ..ontology import graph_io
+    try:
+        return graph_io.import_graph(payload, publish=publish, name_override=name,
+                                     keep_scoping=keep_scoping)
+    except ValueError as e:
+        raise HTTPException(400, f"Import failed: {e}")
+    except Exception as e:  # pragma: no cover - defensive
+        raise HTTPException(500, f"Import failed unexpectedly: {type(e).__name__}: {e}")
+
+
+@router.post("/graphs/import")
+async def import_graph(file: UploadFile = File(...), publish: bool = True, name: str = "",
+                       keep_scoping: bool = False):
     raw = await file.read()
     try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise HTTPException(400, f"uploaded file is not valid JSON: {e}")
-    try:
-        return graph_io.import_graph(payload, publish=publish, name_override=name)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+        payload = json.loads(raw.decode("utf-8-sig"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise HTTPException(400, f"Import failed: uploaded file is not valid JSON ({e})")
+    return _run_import(payload, publish=publish, name=name, keep_scoping=keep_scoping)
 
 
 # ------------------------------- auto-extraction (§9.2) -------------------------------
@@ -477,10 +487,12 @@ def audit(limit: int = 200):
 
 @router.post("/import")
 def import_graph_compat(body: dict):
-    """UI alias for graph import (frontend posts to /ontology/import)."""
-    from ..ontology import graph_io
-    data = body.get("graph") or body
-    return graph_io.import_graph(data)
+    """UI alias for graph import. The frontend posts {snapshot: <export document>}; the raw
+    export document and the legacy {graph: <document>} wrapper are accepted too (graph_io.unwrap).
+    Optional body fields: name, publish (default true), keep_scoping (default false)."""
+    return _run_import(body, publish=bool(body.get("publish", True)),
+                       name=str(body.get("name") or ""),
+                       keep_scoping=bool(body.get("keep_scoping", False)))
 
 
 @router.put("/workflow-graph")
