@@ -11,6 +11,8 @@ provider and is reached only via the admin/authoring routers — never the agent
 from .contract import (ActionDef, AuthContext, ContextBundle, ContextProvider,
                        Edge, Entity, QueryInput, Snippet, SourceRef)
 from .factory import get_context_provider, record_telemetry, telemetry
+from .runtime_context import (StepContext, build_step_context, prompt_block, resolve_hops,
+                              serialize_bundle)
 
 __all__ = [
     "ContextProvider",
@@ -25,4 +27,9 @@ __all__ = [
     "get_context_provider",
     "record_telemetry",
     "telemetry",
+    "build_step_context",
+    "serialize_bundle",
+    "prompt_block",
+    "resolve_hops",
+    "StepContext",
 ]

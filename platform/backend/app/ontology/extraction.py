@@ -31,42 +31,76 @@ def _now() -> str:
 # ------------------------------- structured extraction (§9.2) -------------------------------
 def extract_structured(gid: str, table: str, rows: list[dict], actor: str = "auto") -> dict:
     """Infer an entity type from a table and create entities; turn `*_id` columns into
-    edges to referenced rows. Confidence is high for schema-derived facts."""
+    edges to referenced rows. Confidence is high for schema-derived facts.
+    Re-importing the same table reuses existing entities/edges (no duplicates), and `*_id`
+    references resolve to rows imported earlier from other tables."""
     if not rows:
         return {"entities": 0, "edges": 0, "entity_types": 0}
     etype = table.rstrip("s").capitalize() or "Row"
     cols = list(rows[0].keys())
-    store.add_entity_type(gid, {"name": etype, "properties": cols})
+    store.add_entity_type(gid, {"name": etype, "properties": cols})   # deduplicated by name
 
     id_col = next((c for c in cols if c in ("id", f"{table}_id", f"{etype.lower()}_id")), cols[0])
     ref_cols = [c for c in cols if c.endswith("_id") and c != id_col]
 
-    ecount = tcount = 0
+    def _norm(n) -> str:
+        return " ".join(str(n or "").lower().split())
+
+    existing = store.list_entities(gid)
+    by_type_name = {(_norm(e.get("type")), _norm(e.get("name"))): e["id"] for e in existing}
+
+    def _lookup_ref(rel: str, key: str) -> str | None:
+        """Find an entity imported from another table whose id column equals `key`."""
+        want_type = rel.capitalize()
+        for e in existing:
+            props = e.get("properties") or {}
+            if str(props.get("id", props.get(f"{rel}_id", ""))) == key and \
+                    (_norm(e.get("type")) == _norm(want_type) or not want_type):
+                return e["id"]
+        return None
+
+    ecount = tcount = reused = unresolved = 0
     id_map: dict[str, str] = {}
     for r in rows:
         name = str(r.get("name") or r.get("title") or r.get(id_col) or "row")
+        key = (_norm(etype), _norm(name))
+        if key in by_type_name:
+            id_map[str(r.get(id_col))] = by_type_name[key]
+            reused += 1
+            continue
         ent = store.add_entity(gid, {
             "type": etype, "name": name, "properties": r,
             "confidence": 0.95,
             "provenance": f"structured:{table}#{r.get(id_col)} @ {_now()}",
         }, status="auto")
         id_map[str(r.get(id_col))] = ent["id"]
+        by_type_name[key] = ent["id"]
         ecount += 1
 
+    edge_seen = {(x.get("source"), (x.get("relation") or "").lower(), x.get("target"))
+                 for x in store.list_edges(gid)}
     for r in rows:
         src = id_map.get(str(r.get(id_col)))
         for rc in ref_cols:
             tgt_key = str(r.get(rc))
-            if not tgt_key or tgt_key == "None":
+            if not src or not tgt_key or tgt_key == "None":
                 continue
             rel = rc[:-3]  # supplier_id -> supplier
+            tgt = id_map.get(tgt_key) or _lookup_ref(rel, tgt_key)
+            if not tgt:
+                unresolved += 1   # referenced row not imported yet; import that table, then re-run
+                continue
+            if (src, rel.lower(), tgt) in edge_seen:
+                continue
+            edge_seen.add((src, rel.lower(), tgt))
             store.add_relation_type(gid, {"name": rel, "source_type": etype})
             store.add_edge(gid, {
-                "source": src, "target": id_map.get(tgt_key, tgt_key), "relation": rel,
+                "source": src, "target": tgt, "relation": rel,
                 "confidence": 0.9, "provenance": f"structured:{table}.{rc} @ {_now()}",
             }, status="auto")
             tcount += 1
-    return {"entities": ecount, "edges": tcount, "entity_types": 1}
+    return {"entities": ecount, "edges": tcount, "entity_types": 1,
+            "reused_entities": reused, "unresolved_references": unresolved}
 
 
 # ------------------------------- text extraction (§9.2) -------------------------------

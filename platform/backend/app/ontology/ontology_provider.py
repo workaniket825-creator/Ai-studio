@@ -23,8 +23,38 @@ from . import selection
 import re
 
 _WORD = re.compile(r"[a-z0-9]+")
-def _tok(s: str) -> set[str]:
-    return set(_WORD.findall((s or "").lower()))
+
+
+def _canon(w: str) -> str:
+    """Light singularisation so 'customers' matches the entity 'Customer'."""
+    if len(w) > 4 and w.endswith("ies"):
+        return w[:-3] + "y"
+    if len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
+        return w[:-1]
+    return w
+
+
+def _tok(s: str, query: bool = False) -> set[str]:
+    """Entity names -> canonical tokens; query text -> surface AND canonical tokens, so an
+    entity matches when every token of its (canonical) name appears in the query."""
+    words = _WORD.findall((s or "").lower())
+    if query:
+        return set(words) | {_canon(w) for w in words}
+    return {_canon(w) for w in words}
+
+
+def _ent(e: dict) -> Entity:
+    return Entity(id=e.get("id", ""), type=e.get("type") or "Entity",
+                  name=e.get("name") or e.get("id", ""), properties=e.get("properties") or {},
+                  graph_id=e.get("graph_id", ""), confidence=e.get("confidence", 1.0),
+                  provenance=e.get("provenance", ""))
+
+
+def _edge(x: dict) -> Edge:
+    return Edge(id=x.get("id", ""), source=x.get("source", ""), target=x.get("target", ""),
+                relation=x.get("relation") or "related_to", properties=x.get("properties") or {},
+                graph_id=x.get("graph_id", ""), confidence=x.get("confidence", 1.0),
+                provenance=x.get("provenance", ""))
 
 def _authorized(authz: AuthContext) -> bool:
     # Shared permission check (parity with the rest of the platform's RBAC-lite).
@@ -37,31 +67,39 @@ class OntologyProvider:
     def __init__(self, graph_ids: list[str] | None = None):
         self._graph_ids: list[str] = graph_ids or []
         self._plain = PlainProvider()
+        self._snaps: list[dict] | None = None   # published snapshots, loaded ONCE per provider
 
 
 
     # -- helpers -------------------------------------------------------------
+    def _snapshots(self) -> list[dict]:
+        # one store read per provider instance (the runtime builds a provider per step) instead
+        # of re-loading the whole ontology DB for every helper call
+        if self._snaps is None:
+            self._snaps = store.published_snapshots(self._graph_ids)
+        return self._snaps
+
     def _published_entities(self) -> list[dict]:
-        out = []
-        for gid in self._graph_ids:
-            snap = store.published_snapshot(gid)
-            if snap:
-                out.extend(snap.get("entities", []))
-        return out
+        return [e for s in self._snapshots() for e in (s.get("entities") or []) if e.get("id")]
 
     def _published_edges(self) -> list[dict]:
-        out = []
-        for gid in self._graph_ids:
-            snap = store.published_snapshot(gid)
-            if snap:
-                out.extend(snap.get("edges", []))
-        return out
+        return [x for s in self._snapshots() for x in (s.get("edges") or [])
+                if x.get("source") and x.get("target")]
+
+    def find_entities(self, ref: str) -> list[Entity]:
+        """Resolve an entity reference (id, exact name, or text containing the name)."""
+        ref = (ref or "").strip()
+        pub = self._published_entities()
+        hit = [e for e in pub if e.get("id") == ref] or \
+              [e for e in pub if (e.get("name") or "").strip().lower() == ref.lower()] or \
+              self._resolve(ref)
+        return [_ent(e) for e in hit]
 
     def _resolve(self, text: str) -> list[dict]:
         """Token-overlap entity resolution over published entities (a real
         deployment would use embeddings/pgvector). Matches when all of the
         entity's name-tokens appear in the query, regardless of punctuation/case."""
-        qt = _tok(text)
+        qt = _tok(text, query=True)
         if not qt:
             return []
         hits = []
@@ -87,32 +125,20 @@ class OntologyProvider:
                 ents.append(e)
 
         if not ents:
-            # ontology-first fallback: nothing modeled matched -> behave as plain
-            from .factory import record_telemetry   # deferred import, avoids circular load
-            record_telemetry({
-                "provider": "ontology", "ontology_used": False, "entities": 0,
-                "reason": "no_resolve_match",
-                "graph_ids": self._graph_ids,
-                "published_entity_count": len(self._published_entities()),
-                "query_preview": (query.text or "")[:120],
-            })
+            # ontology-first fallback: nothing modeled matched -> behave as plain. The reason is
+            # returned on the bundle; the CALLER records one telemetry entry (no duplicates).
+            plain.fallback_reason = "no_entity_match"
+            plain.graph_ids = list(self._graph_ids)
             return plain
-            
-        entities = [
-            Entity(
-                id=e["id"], type=e["type"], name=e["name"],
-                properties=e.get("properties", {}),
-                graph_id=e.get("graph_id", ""),
-                confidence=e.get("confidence", 1.0),
-                provenance=e.get("provenance", ""),
-            )
-            for e in ents
-        ]
+
+        entities = [_ent(e) for e in ents]
         # --- multi-hop expansion: per-run hop count (query.ontology_hops) with the node cap
         #     from config (expansion.max_nodes). Bounded BFS with path + edge dedup + telemetry.
         from .ontology_config import get_config
         exp = (get_config().get("expansion") or {})
-        max_hops = max(0, min(int(getattr(query, "ontology_hops", 1) or 1), 10))
+        # 0 = matched entities only (no traversal); capped at 10
+        raw_hops = getattr(query, "ontology_hops", 1)
+        max_hops = max(0, min(int(1 if raw_hops is None else raw_hops), 10))
         max_nodes = max(1, int(exp.get("max_nodes", 15)))
 
         seed_ids = {e.id for e in entities}
@@ -121,32 +147,21 @@ class OntologyProvider:
 
         # neighbour nodes reached by traversal (beyond the directly-matched seeds)
         referenced_ids = visited_nodes - seed_ids
-        neighbour_entities = [
-            Entity(id=all_pub[eid]["id"], type=all_pub[eid]["type"], name=all_pub[eid]["name"],
-                   properties=all_pub[eid].get("properties", {}),
-                   graph_id=all_pub[eid].get("graph_id", ""),
-                   confidence=all_pub[eid].get("confidence", 1.0),
-                   provenance=all_pub[eid].get("provenance", ""))
-            for eid in referenced_ids if eid in all_pub
-        ]
+        neighbour_entities = [_ent(all_pub[eid]) for eid in referenced_ids if eid in all_pub]
 
-        id_to_name = {eid: e["name"] for eid, e in all_pub.items()}
+        id_to_name = {eid: (e.get("name") or eid) for eid, e in all_pub.items()}
         # dedup edges by semantic triple (source_name, relation, target_name)
         edge_sem_seen: set = set()
         deduped_raw_edges = []
         for x in raw_edges:
-            sem = (id_to_name.get(x["source"], x["source"]).lower(), x["relation"].lower(),
-                   id_to_name.get(x["target"], x["target"]).lower())
+            sem = (str(id_to_name.get(x["source"], x["source"])).lower(),
+                   str(x.get("relation") or "").lower(),
+                   str(id_to_name.get(x["target"], x["target"])).lower())
             if sem not in edge_sem_seen:
                 edge_sem_seen.add(sem)
                 deduped_raw_edges.append(x)
 
-        edges = [
-            Edge(id=x["id"], source=x["source"], target=x["target"], relation=x["relation"],
-                 properties=x.get("properties", {}), graph_id=x.get("graph_id", ""),
-                 confidence=x.get("confidence", 1.0), provenance=x.get("provenance", ""))
-            for x in deduped_raw_edges
-        ]
+        edges = [_edge(x) for x in deduped_raw_edges]
 
         # dedup neighbours by lowercased name against the seeds
         nb_seen = {e.name.lower() for e in entities}
@@ -164,7 +179,7 @@ class OntologyProvider:
         path_seen: set = set()
         resolved_paths = []
         for path in raw_paths:
-            names = [all_pub[eid]["name"] for eid in path if eid in all_pub]
+            names = [all_pub[eid].get("name") or eid for eid in path if eid in all_pub]
             if len(names) > 1:
                 ps = " -> ".join(names)
                 if ps not in path_seen:
@@ -182,6 +197,7 @@ class OntologyProvider:
             traversed_nodes=len(all_entities),
             traversed_edges=len(edges),
             paths=resolved_paths[:50],
+            graph_ids=list(self._graph_ids),
         )
 
     def _multi_hop_expand(self, seed_ids: set, max_hops: int, max_nodes: int):
@@ -190,6 +206,8 @@ class OntologyProvider:
         within the traversal are used — this is what makes the hop control authoritative."""
         from collections import deque
         all_entities = {e["id"]: e for e in self._published_entities()}
+        if max_hops <= 0:
+            return set(seed_ids), [], [], all_entities
         all_edges = self._published_edges()
         visited_nodes: set = set(seed_ids)
         edge_seen: set = set()
@@ -248,13 +266,7 @@ class OntologyProvider:
             return None
         for e in self._published_entities():
             if e["id"] == entity_id:
-                return Entity(
-                    id=e["id"], type=e["type"], name=e["name"],
-                    properties=e.get("properties", {}),
-                    graph_id=e.get("graph_id", ""),
-                    confidence=e.get("confidence", 1.0),
-                    provenance=e.get("provenance", ""),
-                )
+                return _ent(e)
         return None
 
     async def get_neighbors(self, entity_id: str, relation: Optional[str],
@@ -264,15 +276,9 @@ class OntologyProvider:
         out = []
         for x in self._published_edges():
             if x["source"] == entity_id or x["target"] == entity_id:
-                if relation and x["relation"] != relation:
+                if relation and (x.get("relation") or "").lower() != relation.lower():
                     continue
-                out.append(Edge(
-                    id=x["id"], source=x["source"], target=x["target"],
-                    relation=x["relation"], properties=x.get("properties", {}),
-                    graph_id=x.get("graph_id", ""),
-                    confidence=x.get("confidence", 1.0),
-                    provenance=x.get("provenance", ""),
-                ))
+                out.append(_edge(x))
         return out
 
 

@@ -12,6 +12,7 @@ Naming: ontology_store (lowercase) — matches all internal imports.
 from __future__ import annotations
 
 import json
+import threading
 import os
 import uuid
 from datetime import datetime, timezone
@@ -150,6 +151,19 @@ def delete_graph(gid: str, actor: str = "admin") -> bool:
 
 def add_entity_type(gid: str, data: dict, actor: str = "admin") -> dict:
     db = _load()
+    # Deduplicate by name within graph (repeat structured imports reuse the type)
+    name = data.get("name", "Unknown")
+    existing = next((t for t in db["entity_types"].values()
+                     if t["graph_id"] == gid and t["name"] == name), None)
+    if existing:
+        props = list(existing.get("properties") or [])
+        for p in data.get("properties") or []:
+            if p not in props:
+                props.append(p)
+        if props != (existing.get("properties") or []):
+            existing["properties"] = props
+            _save(db)
+        return existing
     tid = _id("etype")
     t = {
         "id": tid, "graph_id": gid,
@@ -513,11 +527,15 @@ def create_version(gid: str, actor: str = "expert") -> dict:
 
 
 def _snapshot(db: dict, gid: str) -> dict:
+    ents = [e for e in db["entities"].values()
+            if e["graph_id"] == gid and e.get("status") == "approved"]
+    ids = {e["id"] for e in ents}
     return {
-        "entities": [e for e in db["entities"].values()
-                     if e["graph_id"] == gid and e.get("status") == "approved"],
-        "edges": [e for e in db["edges"].values()
-                  if e["graph_id"] == gid and e.get("status") == "approved"],
+        "entities": ents,
+        # only edges whose BOTH endpoints are published entities (no dangling ids at runtime)
+        "edges": [x for x in db["edges"].values()
+                  if x["graph_id"] == gid and x.get("status") == "approved"
+                  and x.get("source") in ids and x.get("target") in ids],
         "entity_types": [t for t in db["entity_types"].values() if t["graph_id"] == gid],
         "relation_types": [t for t in db["relation_types"].values() if t["graph_id"] == gid],
     }
@@ -593,6 +611,18 @@ def published_snapshot(gid: str) -> dict | None:
     v = db["versions"].get(g["published_version"])
     return v["snapshot"] if v else None
 
+def published_snapshots(gids: list[str]) -> list[dict]:
+    """Published snapshots for several graphs with ONE store read (runtime hot path)."""
+    db = _load()
+    out = []
+    for gid in gids or []:
+        g = db["graphs"].get(gid)
+        v = db["versions"].get(g["published_version"]) if g and g.get("published_version") else None
+        if v and v.get("snapshot"):
+            out.append(v["snapshot"])
+    return out
+
+
 def snapshot_status(gid: str) -> dict:
     """Compare live entity/edge counts to what's actually in the published
     snapshot, so the UI can warn 'this graph has unpublished changes'."""
@@ -610,3 +640,33 @@ def snapshot_status(gid: str) -> dict:
 
 def audit_log(limit: int = 200) -> list[dict]:
     return list(reversed(_load()["audit"][-limit:]))
+
+
+# ============================ WRITE LOCK =====================================
+# The whole ontology DB is persisted as one document, so every mutation is a
+# load -> modify -> save cycle. Serialise them in-process so a background extraction job
+# and UI edits cannot overwrite each other's changes (lost updates). Re-entrant: mutators
+# may call each other. (Single backend process, as deployed by docker-compose.)
+_WRITE_LOCK = threading.RLock()
+
+
+def _locked(fn):
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*a, **kw):
+        with _WRITE_LOCK:
+            return fn(*a, **kw)
+    return wrapper
+
+
+for _name in ("create_graph", "update_graph", "delete_graph",
+              "add_entity_type", "update_entity_type", "delete_entity_type",
+              "add_relation_type", "update_relation_type", "delete_relation_type",
+              "add_entity", "update_entity", "delete_entity",
+              "add_edge", "update_edge", "delete_edge",
+              "add_taxonomy_node", "delete_taxonomy_node",
+              "set_item_status", "bulk_approve",
+              "create_version", "transition_version", "rollback"):
+    if _name in globals():
+        globals()[_name] = _locked(globals()[_name])

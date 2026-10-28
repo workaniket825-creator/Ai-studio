@@ -13,49 +13,56 @@ _STOP = {"the", "a", "an", "and", "or", "for", "with", "from", "this", "that",
          "is", "are", "was", "were", "to", "of", "in", "on", "at", "by"}
 
 
+def _tag_tokens(tags) -> set[str]:
+    """Tags may be a dict (key -> value) or a list; match on whole words, not substrings."""
+    from .ontology_provider import _tok
+    vals = tags.values() if isinstance(tags, dict) else (tags or [])
+    return _tok(" ".join(str(v) for v in vals))
+
+
+def bound_graph(workflow_id: str = "") -> str:
+    """Graph explicitly bound to this workflow on the Enablement screen ("" if none)."""
+    try:
+        from .ontology_config import get_config
+        return (get_config().get("workflow_graphs") or {}).get(workflow_id or "") or ""
+    except Exception:
+        return ""
+
+
 def select_graphs(tenant: str = "default", workflow_id: str = "",
                   query_text: str = "") -> list[dict]:
     published = [g for g in store.list_graphs() if g.get("published_version")]
+
+    # Explicit binding wins and is EXCLUSIVE: the workflow uses only that graph. If the bound
+    # graph is not published (yet), return [] -> plain context. Never substitute another graph.
+    bound = bound_graph(workflow_id)
+    if bound:
+        return [g for g in published if g.get("id") == bound]
     if not published:
         return []
 
-    # Explicit binding wins: if this workflow is bound to a specific graph in config
-    # (Enablement screen), use ONLY that graph — never mix in other unscoped graphs.
-    try:
-        from .ontology_config import get_config
-        bound = (get_config().get("workflow_graphs") or {}).get(workflow_id or "")
-    except Exception:
-        bound = None
-    if bound:
-        only = [g for g in published if g.get("id") == bound]
-        if only:
-            return only
-
-    q_tokens = [t for t in (query_text or "").lower().split()
-                if t not in _STOP and len(t) > 2]
+    from .ontology_provider import _tok
+    q_tokens = {t for t in _tok(query_text, query=True) if t not in _STOP and len(t) > 2}
 
     matches: list[dict] = []
     for g in published:
-        if workflow_id and workflow_id in (g.get("workflows") or []):
-            matches.append(g)
-            continue
-
         scoped_tenants = g.get("tenants") or []
         if scoped_tenants and tenant not in scoped_tenants:
-            continue
+            continue                      # tenant scoping applies to every graph
 
         scoped_workflows = g.get("workflows") or []
-        if scoped_workflows and workflow_id and workflow_id not in scoped_workflows:
-            continue  # graph is restricted to other workflows
+        if workflow_id and workflow_id in scoped_workflows:
+            matches.append(g)             # graph explicitly scoped to this workflow
+            continue
+        if scoped_workflows:
+            continue                      # graph is restricted to other workflows
 
-        tags = g.get("tags") or {}
-        haystack = " ".join(str(v) for v in tags.values()).lower()
-
-        if q_tokens and haystack:
-            if any(tok in haystack for tok in q_tokens):
+        tag_toks = _tag_tokens(g.get("tags"))
+        if q_tokens and tag_toks:
+            if q_tokens & tag_toks:
                 matches.append(g)
-        elif not scoped_workflows:
-            matches.append(g)  # general-purpose graph, nothing to filter against
+        else:
+            matches.append(g)             # general-purpose graph, nothing to filter against
 
     seen: set[str] = set()
     out: list[dict] = []

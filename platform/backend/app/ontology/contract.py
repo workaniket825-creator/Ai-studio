@@ -71,11 +71,17 @@ class ContextBundle:
     traversed_nodes: int = 0
     traversed_edges: int = 0
     paths: list[str] = field(default_factory=list)
+    # why the provider fell back to plain context ("" when the ontology was used), and the
+    # graphs that were consulted - lets the caller record ONE complete telemetry entry.
+    fallback_reason: str = ""
+    graph_ids: list[str] = field(default_factory=list)
 
-    def to_prompt_context(self) -> str:
+    def to_prompt_context(self, include_snippets: bool = True) -> str:
         """Render the bundle into the plain-text context the runtime already uses.
         With empty structured fields this reproduces today's behavior exactly.
-        Deduplicates entities/relations/paths at render time as a safety net."""
+        Deduplicates entities/relations/paths at render time as a safety net.
+        include_snippets=False renders only the graph facts - for callers that already put the
+        upstream text in the prompt themselves (avoids sending it twice)."""
         parts: list[str] = []
 
         if self.entities:
@@ -83,12 +89,12 @@ class ContextBundle:
             seen_ent: set[str] = set()
             unique_ents = []
             for e in self.entities:
-                key = e.name.lower().strip()
+                key = (e.name or e.id or "").lower().strip()
                 if key not in seen_ent:
                     seen_ent.add(key)
                     unique_ents.append(e)
             lines = [
-                f"- {e.type}: {e.name}"
+                f"- {e.type or 'Entity'}: {e.name or e.id}"
                 + (f" ({', '.join(f'{k}={v}' for k, v in e.properties.items())})" if e.properties else "")
                 for e in unique_ents
             ]
@@ -101,9 +107,9 @@ class ContextBundle:
             seen_rel: set[tuple] = set()
             lines = []
             for r in self.relations:
-                src = id_to_name.get(r.source, r.source)
-                tgt = id_to_name.get(r.target, r.target)
-                key = (src.lower(), r.relation.lower(), tgt.lower())
+                src = str(id_to_name.get(r.source, r.source) or "")
+                tgt = str(id_to_name.get(r.target, r.target) or "")
+                key = (src.lower(), (r.relation or "").lower(), tgt.lower())
                 if key not in seen_rel:
                     seen_rel.add(key)
                     lines.append(f"- {src} --{r.relation}--> {tgt}")
@@ -120,7 +126,7 @@ class ContextBundle:
             if unique_paths:
                 parts.append("Ontology traversal paths:\n" + "\n".join(f"- {p}" for p in unique_paths))
 
-        if self.snippets:
+        if include_snippets and self.snippets:
             parts.append("\n".join(s.text for s in self.snippets if s.text))
         return "\n\n".join(p for p in parts if p.strip())
 

@@ -4,6 +4,7 @@ import { Button, HTMLSelect, TextArea, Tag, Card, Collapse, Icon, Spinner, Callo
 import { api, Workflow } from "../api/client";
 import { Markdown } from "../components/Markdown";
 import { toast } from "../components/toaster";
+import { NodeOntology, ontologyFromNodeOutputs, entityLabel, relationLabel } from "../api/ontologyTypes";
 
 type Msg = {
   role: "user" | "assistant";
@@ -13,7 +14,7 @@ type Msg = {
   pending?: boolean;
   steps?: { agent: string; output: string }[];
   artifacts?: any[];
-  ontology?: any[];
+  ontology?: NodeOntology[];
   knowledge?: { text: string; score: number; source: string }[];
   error?: string;
 };
@@ -92,7 +93,7 @@ export function Chat() {
             if (last && last.role === "assistant" && last.pending) {
               last.steps = (r.node_outputs || []).map((n: any) => ({ agent: n.agent, output: n.output }));
               // surface ontology usage live as each agent completes (not just at the end)
-              const onto = (r.node_outputs || []).map((n: any) => n.ontology).filter(Boolean);
+              const onto = ontologyFromNodeOutputs(r.node_outputs);
               if (onto.length) last.ontology = onto;
             }
             return copy;
@@ -179,7 +180,7 @@ export function Chat() {
           last.text = run?.final_output || (run?.node_outputs?.slice(-1)[0]?.output) || "";
           last.steps = (run?.node_outputs || []).map((n: any) => ({ agent: n.agent, output: n.output }));
           // ontology data retrieved/used during this run (spec §2)
-          last.ontology = (run?.node_outputs || []).map((n: any) => n.ontology).filter(Boolean);
+          last.ontology = ontologyFromNodeOutputs(run?.node_outputs);
           // knowledge passages retrieved for this answer (RAG citations)
           if (knowledge.length) last.knowledge = knowledge.map((h: any) => ({
             text: h.text, score: h.score, source: (h.metadata || {}).source || "" }));
@@ -445,21 +446,44 @@ function Bubble({ m }: { m: Msg }) {
                   text="Ontology data used" onClick={() => setOntoOpen(!ontoOpen)} />
                 <Collapse isOpen={ontoOpen}>
                   <div style={{ borderLeft: "2px solid var(--accent)", paddingLeft: 10, marginTop: 6 }}>
-                    {m.ontology.map((o: any, i: number) => (
-                      <div key={i} style={{ marginBottom: 8, fontSize: 12 }}>
+                    {m.ontology.map((o: NodeOntology, i: number) => (
+                      <div key={i} style={{ marginBottom: 10, fontSize: 12 }}>
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center", marginBottom: 4 }}>
+                          {o.agent ? <b style={{ marginRight: 4 }}>{o.agent}</b> : null}
+                          {o.used === false ? <Tag minimal>not used</Tag> : null}
+                          {typeof o.hop_count === "number" ? <Tag minimal intent="primary">{o.hop_count}-hop</Tag> : null}
+                          {typeof o.traversed_nodes === "number" ? <Tag minimal>{o.traversed_nodes} nodes</Tag> : null}
+                          {typeof o.traversed_edges === "number" ? <Tag minimal>{o.traversed_edges} relationships</Tag> : null}
+                        </div>
                         {o.entities?.length ? (
                           <div style={{ marginBottom: 4 }}>
-                            <span className="muted">Entities retrieved: </span>
-                            {o.entities.map((e: any, j: number) => (
-                              <Tag key={j} minimal style={{ marginRight: 4, marginBottom: 3 }}>
-                                {e.name}{e.type ? ` · ${e.type}` : ""}</Tag>))}
+                            <span className="muted">Entities: </span>
+                            {o.entities.map((e, j: number) => {
+                              const { name, type } = entityLabel(e);
+                              return (<Tag key={j} minimal style={{ marginRight: 4, marginBottom: 3 }}>
+                                {name}{type ? ` · ${type}` : ""}</Tag>);
+                            })}
                           </div>) : null}
                         {o.relations?.length ? (
                           <div style={{ marginBottom: 4 }}>
-                            <span className="muted">Relationships: </span>
-                            {o.relations.map((r: any, j: number) => (
-                              <span key={j} style={{ marginRight: 8 }}>{r.source} →<i>{r.relation}</i>→ {r.target}</span>))}
+                            <div className="muted">Relationships:</div>
+                            {o.relations.map((r, j: number) => {
+                              const { source, relation, target } = relationLabel(r);
+                              return (<div key={j} style={{ paddingLeft: 8 }}>
+                                {source} <span className="muted">—</span><i>{relation}</i><span className="muted">→</span> {target}</div>);
+                            })}
                           </div>) : null}
+                        {o.paths?.length ? (
+                          <div style={{ marginBottom: 4 }}>
+                            <div className="muted">Traversal paths:</div>
+                            {o.paths.map((p, j: number) => (
+                              <div key={j} style={{ paddingLeft: 8, fontFamily: "monospace", fontSize: 11 }}>{p}</div>))}
+                          </div>) : null}
+                        {o.context ? (
+                          <details style={{ marginTop: 2 }}>
+                            <summary className="muted" style={{ cursor: "pointer" }}>Context sent to the agent</summary>
+                            <pre style={{ whiteSpace: "pre-wrap", fontSize: 11, margin: "4px 0 0" }}>{o.context}</pre>
+                          </details>) : null}
                       </div>
                     ))}
                   </div>
