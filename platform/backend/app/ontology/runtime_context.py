@@ -134,21 +134,34 @@ def prompt_block(grounded: str) -> str:
 
 # ------------------------------------------------------------------ request resolution
 def resolve_hops(run: Any) -> int:
-    """Per-run hops when the run asked for more than the default (1); otherwise the admin's
-    'Expansion depth (hops)' from Ontology > Enablement. 0 = matched entities only."""
+    """Layered hop-count resolution — highest priority wins:
+
+      1. Per-run value sent from the chat / workflow-run screen
+         (run.ontology_hops, or run.input["ontology_hops"] as a mirror).
+      2. Admin baseline from Ontology > Enablement > Expansion depth (max_hops).
+
+    When the caller explicitly supplies any value — including 1 — it is honoured as-is.
+    The admin baseline is used only when no value was provided at all (defensive fallback).
+    0 = matched entities only; all values are clamped to MAX_HOPS.
+    """
     inp = _get(run, "input", {}) or {}
+    # Primary source: run.ontology_hops (set by runs.py from RunRequest)
     requested = _get(run, "ontology_hops", None)
+    # Secondary mirror: run.input["ontology_hops"] (also written by runs.py)
     if requested is None and isinstance(inp, dict):
         requested = inp.get("ontology_hops")
-    requested = _int(requested, 1) if requested is not None else 1
+
+    if requested is not None:
+        # User explicitly chose a value → honour it, even if it equals 1.
+        return max(0, min(_int(requested, 1), MAX_HOPS))
+
+    # No value provided at all → fall back to the admin's 'Expansion depth' setting.
     try:
         from .ontology_config import get_config
-        default = (get_config().get("expansion") or {}).get("max_hops", 1)
-        default = _int(default, 1)
+        admin_default = _int((get_config().get("expansion") or {}).get("max_hops", 1), 1)
     except Exception:
-        default = 1
-    hops = requested if requested != 1 else default
-    return max(0, min(hops, MAX_HOPS))
+        admin_default = 1
+    return max(0, min(admin_default, MAX_HOPS))
 
 
 def resolve_tenant(run: Any) -> str:
