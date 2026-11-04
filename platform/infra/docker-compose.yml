@@ -1,4 +1,4 @@
-# TCS AI Studio — full-stack container deployment.
+# TCS Domain AI Studio — full-stack container deployment.
 # `docker compose up --build` brings up: frontend (nginx) + backend (FastAPI) +
 # Postgres (pgvector-ready) + MLflow. All state persists via named volumes.
 #

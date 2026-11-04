@@ -1,4 +1,4 @@
-"""MCP (Model Context Protocol) client for AI Studio.
+"""MCP (Model Context Protocol) client for Domain AI Studio.
 
 The rest of the app calls tools synchronously (build_tool_defs / execute_tool are sync, and the
 live runtime calls execute_tool inside its own event loop). The MCP SDK is async. So — exactly

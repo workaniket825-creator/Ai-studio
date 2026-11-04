@@ -23,7 +23,7 @@ export function McpServers() {
     const r = await api.mcpJupyterLink(rid);
     setStatus((st) => ({ ...st, [sid]: { ok: !!r.ok,
       msg: r.ok ? `${r.detail}  Run once:  cd platform/infra && ${r.apply_command}` : (r.detail || "link failed") } }));
-    r.ok ? toast.success("Linked. Run the shown command once on the AI Studio host, then Test.") : toast.error(r.detail || "link failed");
+    r.ok ? toast.success("Linked. Run the shown command once on the Domain AI Studio host, then Test.") : toast.error(r.detail || "link failed");
     refresh();
   };
 

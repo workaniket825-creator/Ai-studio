@@ -5,14 +5,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import SETTINGS
-from .routers import (agents, bundles, chat, connectors, dsl, files, governance, insights, model_endpoints,
+from .routers import (domain_ai, agents, bundles, chat, connectors, dsl, files, governance, insights, model_endpoints,
                      monitoring, mcp, ontology, rag, runs, schedules, tools, workflows)
 from .seed import seed
 
 app = FastAPI(
-    title="TCS AI Studio",
+    title="TCS Domain AI Studio",
     version="1.0",
-    description="TCS AI Studio — build, run and observe agentic workflows.",
+    description="TCS Domain AI Studio — build, run and observe agentic workflows.",
 )
 
 app.add_middleware(
@@ -67,6 +67,7 @@ app.include_router(dsl.router)
 app.include_router(files.router)
 app.include_router(chat.router)
 app.include_router(rag.router)
+app.include_router(domain_ai.router)
 
 
 @app.on_event("startup")

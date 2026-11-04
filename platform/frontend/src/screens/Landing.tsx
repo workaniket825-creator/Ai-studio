@@ -106,7 +106,7 @@ export function Landing({ onEnter }: { onEnter: () => void }) {
       <canvas ref={canvasRef} className="landing-canvas" />
       <div className="landing-overlay">
         <div className="landing-badge">ENTERPRISE · AGENTIC · OBSERVABLE</div>
-        <h1 className="landing-title">TCS <span>AI Studio</span></h1>
+        <h1 className="landing-title">TCS <span>Domain AI Studio</span></h1>
         <div className="landing-ver">v1.0</div>
         <p className="landing-sub">
           Build, run and observe enterprise agentic workflows on a single operational canvas —

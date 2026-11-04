@@ -94,7 +94,7 @@ def connect_server(sid: str, body: dict | None = None):
     return {
         "ok": True,
         "detail": (f"Saved Jupyter target ({jurl}). The jupyter-mcp container reads it only at "
-                   f"start-up: run the command below once on the AI Studio host (in platform/infra)."),
+                   f"start-up: run the command below once on the Domain AI Studio host (in platform/infra)."),
         "env_written": written,
         "apply_command": "docker compose up -d jupyter-mcp",
         "token_set": bool(jtok),

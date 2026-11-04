@@ -1,6 +1,6 @@
-# TCS AI Studio — v1.0
+# TCS Domain AI Studio — v1.0
 
-> **TCS AI Studio v1.0** — an open-source enterprise studio to build, run and observe
+> **TCS Domain AI Studio v1.0** — an open-source enterprise studio to build, run and observe
 > agentic workflows on **Google ADK**. Models via API (**Mistral & Gemini**); **no cloud
 > platform lock-in**. © 2026 Tata Consultancy Services.
 
@@ -13,7 +13,7 @@
   Enable + configure them and link them to agents. See **Setup & Help** for how-to with examples.
 - **Digital-earth landing page:** a cinematic animated intro (rotating globe, starfield, glowing arcs)
   as the first screen; **Enter platform** reveals Home and all sections.
-- **Rebrand:** TCS AI Studio v1.0 with a standard copyright footer.
+- **Rebrand:** TCS Domain AI Studio v1.0 with a standard copyright footer.
 
 A runnable, open-source foundation for the platform in `docs/Architecture_Plan.md`.
 Includes the runtime spine, agent authoring, workflow authoring, and observability.

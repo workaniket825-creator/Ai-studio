@@ -1,0 +1,3189 @@
+// @ts-nocheck
+/* AUTO-ADAPTED from tcs_decision_framework_model_tuning.html (Decision Framework for Model
+   Tuning v3). The framework data and every function below are the ORIGINAL code, unchanged,
+   except: CSS variable names (--dfm-*), theme colours, namespaced inline handlers, and
+   resetAssessment awaiting the platform confirm dialog. Page access is redirected here: */
+export function createDfmEngine(root, host) {
+    const document = {
+        getElementById: (id) => root.querySelector('#' + CSS.escape(id)),
+        querySelector: (sel) => root.querySelector(sel),
+        querySelectorAll: (sel) => root.querySelectorAll(sel),
+        createElement: (tag) => window.document.createElement(tag),
+        execCommand: (...a) => window.document.execCommand(...a),
+        get body() { return window.document.body; },
+    };
+    const localStorage = host.storage;
+    const alert = (msg) => host.notify(String(msg));
+    const confirm = (msg) => host.confirm(String(msg));
+
+    /* ═══════════════════════════════════════════════════════════════════════════
+               FRAMEWORK CONFIGURATION v3
+               The complete framework as data. Engine consumes generically.
+               Structure: Gate → Dimensions → Questions + optional notes/textarea
+               Every dimension has user-controlled verdict (pass/fail/pending) + rationale.
+               ═══════════════════════════════════════════════════════════════════════════ */
+
+            const FRAMEWORK = [
+                // ════════════════════════════════════════════════════════════════════════
+                // GATE 0 — ENTRY CRITERIA (MANDATORY BEFORE STARTING)
+                // ════════════════════════════════════════════════════════════════════════
+                {
+                    id: 'gate0',
+                    num: '00',
+                    title: 'Entry Criteria',
+                    eyebrow: 'Gate · Pre-Framework Qualification',
+                    intro: 'Three mandatory qualification checks. If any one fails, do not enter the framework — go back, do the prep work, return when ready. This gate exists to prevent wasting executive time on conversations the organisation is not yet ready for.',
+                    owners: ['business', 'sme', 'ds'],
+                    color: 'gw-0',
+                    colorVar: '--dfm-accent',
+                    deliverable: 'Entry Qualification Sign-Off — Business, Technical, Data',
+                    dimensions: [
+                        {
+                            id: 'd0_1',
+                            tag: 'E.1',
+                            title: 'Business Qualification',
+                            desc: 'Has the business done the foundational thinking? Without a clear problem statement, use case category, and defined KPIs, the framework cannot help — it just becomes a forum for unfocused exploration.',
+                            owner: 'business',
+                            questions: [
+                                {
+                                    id: 'q0_1_1',
+                                    text: 'Is there a clear problem statement (one sentence)?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q0_1_2',
+                                    text: 'Has the use case category been identified?',
+                                    help: 'e.g., Q&A, summarization, prediction, decision support, classification, generation',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'qa', label: 'Question Answering' },
+                                        { value: 'summarization', label: 'Summarization' },
+                                        { value: 'classification', label: 'Classification / Routing' },
+                                        { value: 'extraction', label: 'Information Extraction' },
+                                        { value: 'generation', label: 'Content Generation' },
+                                        { value: 'decision', label: 'Decision Support' },
+                                        { value: 'prediction', label: 'Prediction / Forecasting' },
+                                        { value: 'agentic', label: 'Agentic / Multi-step' },
+                                        { value: 'unclear', label: 'Not yet identified' }
+                                    ]
+                                },
+                                {
+                                    id: 'q0_1_3',
+                                    text: 'Are KPIs for success defined?',
+                                    help: 'Measurable, time-bound success criteria.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd0_2',
+                            tag: 'E.2',
+                            title: 'Technical Qualification',
+                            desc: 'Has the technical team actually tested a baseline model and documented the gap — or is "the model isn\'t good enough" still an assumption? Untested assumptions are the #1 driver of wasted fine-tuning effort.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q0_2_1',
+                                    text: 'Has baseline model testing been performed?',
+                                    help: 'On at least 50 real production examples with ground truth or expert evaluation.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q0_2_2',
+                                    text: 'Is the observed gap documented (not assumed)?',
+                                    help: 'Specific examples where the baseline failed and why.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd0_3',
+                            tag: 'E.3',
+                            title: 'Data Qualification',
+                            desc: 'Is data even available to train on, and is there an SME who can validate it? Without both, no amount of methodology will help.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q0_3_1',
+                                    text: 'Has data existence been initially confirmed?',
+                                    help: 'Not detailed audit yet — just confirmation that relevant data exists somewhere.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q0_3_2',
+                                    text: 'Is an SME identified and available for validation?',
+                                    help: 'A named domain expert who can commit time to the program.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                }
+                            ]
+                        }
+                    ]
+                },
+
+                // ════════════════════════════════════════════════════════════════════════
+                // GATE 1 — BUSINESS & PROBLEM FRAMING
+                // ════════════════════════════════════════════════════════════════════════
+                {
+                    id: 'gate1',
+                    num: '01',
+                    title: 'Business & Problem Framing',
+                    eyebrow: 'Gate · Business Lead · SME Validate',
+                    intro: 'Clearly define the use case, decision criticality, and expected output behaviour. This is business-owned. Without crisp answers here, downstream technical and data decisions are made on quicksand.',
+                    owners: ['business', 'sme'],
+                    color: 'gw-1',
+                    colorVar: '--dfm-tcs-bright',
+                    deliverable: 'Use Case Specification + Decision Criticality Classification',
+                    dimensions: [
+                        {
+                            id: 'd1_1',
+                            tag: '1.1',
+                            title: 'Business Process & Impact',
+                            desc: 'Which business process is impacted, and how does the AI sit within it? An advisory tool for senior staff and an autonomous decision-maker for high-volume transactions are fundamentally different products.',
+                            owner: 'business',
+                            questions: [
+                                {
+                                    id: 'q1_1_1',
+                                    text: 'What business process does this model support?',
+                                    help: 'Name the workflow — e.g., "loan underwriting committee review", "AML alert triage", "clinical documentation drafting".',
+                                    type: 'text',
+                                    required: true
+                                },
+                                {
+                                    id: 'q1_1_2',
+                                    text: 'What is the model\'s role in the decision?',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'assistive', label: 'Assistive — drafts, suggestions, augmentation' },
+                                        { value: 'advisory', label: 'Advisory — recommendations reviewed by human' },
+                                        { value: 'autonomous', label: 'Autonomous — model decides; human reviews exceptions' }
+                                    ]
+                                },
+                                {
+                                    id: 'q1_1_3',
+                                    text: 'Who is the end user and what is their expertise level?',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'expert', label: 'Domain expert (can catch model errors)' },
+                                        { value: 'trained', label: 'Trained user (some domain knowledge)' },
+                                        { value: 'frontline', label: 'Frontline staff (limited expertise)' },
+                                        { value: 'customer', label: 'External customer (no expertise)' }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd1_2',
+                            tag: '1.2',
+                            title: 'Decision Criticality',
+                            desc: 'What is the cost of the model being wrong? The answer determines acceptable error rates, governance overhead, and whether human-in-the-loop is mandatory.',
+                            owner: 'business',
+                            questions: [
+                                {
+                                    id: 'q1_2_1',
+                                    text: 'What is the consequence of a wrong output?',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'minor', label: 'Minor — inconvenience, easily corrected' },
+                                        { value: 'moderate', label: 'Moderate — productivity cost, reversible' },
+                                        { value: 'significant', label: 'Significant — financial or reputational impact' },
+                                        { value: 'severe', label: 'Severe — regulatory breach, safety, irreversible loss' }
+                                    ]
+                                },
+                                {
+                                    id: 'q1_2_2',
+                                    text: 'Decision criticality classification',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'low', label: 'Low criticality' },
+                                        { value: 'medium', label: 'Medium criticality' },
+                                        { value: 'high', label: 'High criticality — needs strong controls' }
+                                    ]
+                                },
+                                {
+                                    id: 'q1_2_3',
+                                    text: 'What is the cost of "no answer" or abstention?',
+                                    help: 'Some use cases tolerate the model saying "I don\'t know"; others can\'t.',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'low', label: 'Low — abstention is acceptable' },
+                                        { value: 'moderate', label: 'Moderate — abstention reduces value but is OK' },
+                                        { value: 'high', label: 'High — must always produce an answer' }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd1_3',
+                            tag: '1.3',
+                            title: 'Expected Output Behaviour',
+                            desc: 'What kind of output does the use case need? Deterministic outputs (always same result for same input) demand different design than probabilistic; explainability and auditability are regulatory requirements that shape model choice.',
+                            owner: 'business',
+                            questions: [
+                                {
+                                    id: 'q1_3_1',
+                                    text: 'Output behaviour requirement',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'deterministic', label: 'Deterministic — same input must give same output' },
+                                        { value: 'probabilistic', label: 'Probabilistic — natural variation acceptable' },
+                                        { value: 'hybrid', label: 'Hybrid — some elements deterministic, some not' }
+                                    ]
+                                },
+                                {
+                                    id: 'q1_3_2',
+                                    text: 'Does the use case require explainability?',
+                                    help: 'Must the model explain its reasoning — for regulatory, ethical, or user-trust reasons?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q1_3_3',
+                                    text: 'Does the use case require auditability?',
+                                    help: 'Must every decision be traceable for compliance review or dispute resolution?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd1_4',
+                            tag: '1.4',
+                            title: 'Business Value & KPIs',
+                            desc: 'Without quantified baseline and target, the program cannot prove ROI later — and survives on faith rather than evidence.',
+                            owner: 'business',
+                            questions: [
+                                {
+                                    id: 'q1_4_1',
+                                    text: 'Has the current baseline been quantified?',
+                                    help: 'Specific metric value today, with source of measurement.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q1_4_2',
+                                    text: 'Has the target performance been defined?',
+                                    help: 'Specific target with timeline and confidence level.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q1_4_3',
+                                    text: 'Estimated business value (3-year)',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'high', label: 'High — multi-million $ annual impact' },
+                                        { value: 'medium', label: 'Medium — six-figure impact' },
+                                        { value: 'low', label: 'Low — efficiency improvement' },
+                                        { value: 'unknown', label: 'Not yet quantified' }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                },
+
+                // ════════════════════════════════════════════════════════════════════════
+                // GATE 2 — MODEL GAP & FEASIBILITY (THE CRITICAL GATE)
+                // ════════════════════════════════════════════════════════════════════════
+                {
+                    id: 'gate2',
+                    num: '02',
+                    title: 'Model Gap & Feasibility',
+                    eyebrow: 'Gate · Data Scientist Lead · SME Joint',
+                    intro: 'The critical gate. Justify fine-tuning over the alternatives. Most failed projects are projects that should have used RAG, prompting, or an existing model — but committed to fine-tuning by default. This gate prevents that mistake.',
+                    owners: ['ds', 'sme'],
+                    color: 'gw-2',
+                    colorVar: '--dfm-c-violet',
+                    deliverable: 'Fine-Tuning Justification + Alternative Rejection Document',
+                    dimensions: [
+                        {
+                            id: 'd2_1',
+                            tag: '2.1',
+                            title: 'Gap Classification',
+                            desc: 'What kind of gap is this? Different gap types map to different solutions — knowledge gaps need DAPT, behaviour gaps need SFT/RLHF, consistency issues may not need training at all.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q2_1_1',
+                                    text: 'What types of gap are present? (select all that apply)',
+                                    help: 'Real use cases often have multiple gap types simultaneously — e.g., knowledge gap + behaviour gap. Capturing all of them shapes the training stack.',
+                                    type: 'multi-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'knowledge', label: 'Knowledge gap — model lacks domain facts' },
+                                        { value: 'reasoning', label: 'Reasoning gap — model can\'t reason about domain' },
+                                        { value: 'consistency', label: 'Consistency issue — variable quality across inputs' },
+                                        { value: 'formatting', label: 'Formatting issue — wrong structure / style' },
+                                        { value: 'behaviour', label: 'Behaviour issue — wrong tone, escalation, compliance' }
+                                    ]
+                                },
+                                {
+                                    id: 'q2_1_2',
+                                    text: 'Is the gap surface-level (output shape) or deep (representation)?',
+                                    help: 'Surface gaps often solvable without training. Deep gaps need DAPT or extensive SFT.',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'surface', label: 'Surface — formatting, tone, output shape' },
+                                        { value: 'medium', label: 'Medium — applying knowledge correctly' },
+                                        { value: 'deep', label: 'Deep — fundamental domain understanding missing' }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd2_2',
+                            tag: '2.2',
+                            title: 'Alternative Strategy Check — Prompting',
+                            desc: 'Has prompt engineering been seriously tested? A well-engineered prompt against a frontier model solves a remarkable proportion of "fine-tuning" requests.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q2_2_1',
+                                    text: 'Has the use case been tested against a frontier model with structured prompting?',
+                                    help: 'On ≥50 real examples with ground truth.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q2_2_2',
+                                    text: 'What did prompted frontier model achieve?',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'meets', label: '≥90% of target — meets bar' },
+                                        { value: 'close', label: '70-90% — close, may iterate' },
+                                        { value: 'partial', label: '40-70% — meaningful gap' },
+                                        { value: 'far', label: '<40% — significant gap, training warranted' },
+                                        { value: 'untested', label: 'Not tested' }
+                                    ]
+                                },
+                                {
+                                    id: 'q2_2_3',
+                                    text: 'Is prompted frontier model commercially viable at production scale?',
+                                    help: 'Cost per inference × volume = annual cost. Sometimes capable but unsustainable.',
+                                    type: 'yes-no-partial'
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd2_3',
+                            tag: '2.3',
+                            title: 'Alternative Strategy Check — RAG',
+                            desc: 'If knowledge changes frequently and is in retrievable form, RAG is the architecture — not fine-tuning. Many enterprises fine-tune what should have been retrieved.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q2_3_1',
+                                    text: 'How frequently does the relevant knowledge change?',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'daily', label: 'Daily / continuously' },
+                                        { value: 'weekly', label: 'Weekly' },
+                                        { value: 'monthly', label: 'Monthly' },
+                                        { value: 'quarterly', label: 'Quarterly' },
+                                        { value: 'static', label: 'Annually or static' }
+                                    ]
+                                },
+                                {
+                                    id: 'q2_3_2',
+                                    text: 'Is the knowledge documented in retrievable artefacts?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q2_3_3',
+                                    text: 'Would answers change as documents are added/updated/removed?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q2_3_4',
+                                    text: 'Could a hybrid (RAG + light fine-tuning) be better than either alone?',
+                                    help: 'Often the right answer for regulated knowledge work.',
+                                    type: 'yes-no-partial'
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd2_4',
+                            tag: '2.4',
+                            title: 'Alternative Strategy Check — Agentic / Tool / Public Model',
+                            desc: 'Three more alternatives to rule out: agentic orchestration (if multi-step workflow is the real bottleneck), tool augmentation (if the model needs to call external systems), and an existing public domain-fine-tuned model.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q2_4_1',
+                                    text: 'If the model gave a perfect single-turn response, would the use case work end-to-end?',
+                                    help: 'If no, the bottleneck is upstream — build the agent, don\'t fine-tune the model.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q2_4_2',
+                                    text: 'Could the problem be solved with tool augmentation (function calling, retrieval, calculation)?',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q2_4_3',
+                                    text: 'Does a publicly available domain-fine-tuned model exist for this use case?',
+                                    help: 'Check open-weight model repositories before building from scratch — sometimes the work has already been done.',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q2_4_4',
+                                    text: 'Does the use case require organisation-specific differentiation a public model cannot provide?',
+                                    help: 'If no, the public model probably suffices.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd2_5',
+                            tag: '2.5',
+                            title: 'Domain Complexity, Niche-ness & Hallucination Risk',
+                            desc: 'How specialised is the domain — and what is the hallucination risk if the model is used without domain adaptation? Highly niche domains with proprietary jargon and tacit knowledge favour fine-tuning, especially Domain-Adaptive Pre-Training (DAPT). When vocabulary is significantly outside the base model\'s training distribution, hallucination risk rises sharply.',
+                            owner: 'sme',
+                            questions: [
+                                {
+                                    id: 'q2_5_1',
+                                    text: 'How specialised is the domain vocabulary?',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'standard', label: 'Standard — common business / general English' },
+                                        { value: 'industry', label: 'Industry-specific terminology' },
+                                        { value: 'highly', label: 'Highly specialised — proprietary jargon' },
+                                        { value: 'extreme', label: 'Extremely niche — undocumented in public sources' }
+                                    ]
+                                },
+                                {
+                                    id: 'q2_5_2',
+                                    text: 'How much of the institutional reasoning is tacit (in expert heads, not documents)?',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'documented', label: 'Mostly documented' },
+                                        { value: 'mixed', label: 'Mixed — some tacit, some documented' },
+                                        { value: 'tacit', label: 'Largely tacit — only experts know' }
+                                    ]
+                                },
+                                {
+                                    id: 'q2_5_3',
+                                    text: 'Is this a competitive differentiator or commodity capability?',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'differentiator', label: 'Differentiator — proprietary advantage' },
+                                        { value: 'parity', label: 'Parity — table stakes' },
+                                        { value: 'commodity', label: 'Commodity — widely available' }
+                                    ]
+                                },
+                                {
+                                    id: 'q2_5_4',
+                                    text: 'Does the domain contain new or unseen terminology unlikely to be in base model training data?',
+                                    help: 'Words, phrases, codes, abbreviations, product names, internal taxonomies that base models would not have encountered. This is the strongest single signal for needing DAPT rather than just SFT.',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'none', label: 'No — vocabulary is standard, well-represented in public data' },
+                                        { value: 'some', label: 'Some — a few terms are domain-specific but most are standard' },
+                                        { value: 'substantial', label: 'Substantial — significant proprietary or technical vocabulary' },
+                                        { value: 'extensive', label: 'Extensive — large body of new terms, phrases, internal codes' }
+                                    ]
+                                },
+                                {
+                                    id: 'q2_5_5',
+                                    text: 'What is the hallucination risk if the base model is used without domain adaptation?',
+                                    help: 'When a model encounters unfamiliar vocabulary or domain patterns, it tends to confabulate plausible-sounding but wrong outputs. Niche domains with new terminology dramatically increase this risk.',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'low', label: 'Low — domain is well-covered, base model handles it accurately' },
+                                        { value: 'moderate', label: 'Moderate — some hallucination expected on edge cases' },
+                                        { value: 'high', label: 'High — frequent hallucination on domain-specific content' },
+                                        { value: 'critical', label: 'Critical — hallucination is the primary failure mode; DAPT essential' }
+                                    ]
+                                },
+                                {
+                                    id: 'q2_5_6',
+                                    text: 'Does the use case require the model to "know what it does not know" (abstain when uncertain)?',
+                                    help: 'In highly niche domains where hallucination would be costly, the model must be trained to recognise the edge of its knowledge — this affects both training data design and evaluation criteria.',
+                                    type: 'yes-no-partial'
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd2_6',
+                            tag: '2.6',
+                            title: 'Bias-Free Decision Making Requirement',
+                            desc: 'Some use cases specifically need a model that does not carry the biases of existing pre-trained models. This is a strong argument for fine-tuning — but requires very careful data curation to avoid introducing new biases.',
+                            owner: 'sme',
+                            questions: [
+                                {
+                                    id: 'q2_6_1',
+                                    text: 'Does the use case require avoiding biases of existing pre-trained models?',
+                                    help: 'e.g., regulatory or fairness contexts where mainstream model defaults are unacceptable.',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q2_6_2',
+                                    text: 'Are there known limitations of base models in this domain?',
+                                    help: 'Document specific failure modes — these become the targeted fine-tuning objectives.',
+                                    type: 'yes-no-partial'
+                                }
+                            ]
+                        }
+                    ]
+                },
+
+                // ════════════════════════════════════════════════════════════════════════
+                // GATE 3 — DATA READINESS & DEPENDENCY
+                // ════════════════════════════════════════════════════════════════════════
+                {
+                    id: 'gate3',
+                    num: '03',
+                    title: 'Data Readiness & Dependency',
+                    eyebrow: 'Gate · Data Scientist Lead · SME Validate',
+                    intro: 'The Data Contract. What data exists, in what volume, with what quality and coverage. Plus the often-forgotten dimension: SME validation capacity. Without SME bandwidth to validate outputs and define ground truth, no amount of data will produce a working model.',
+                    owners: ['ds', 'sme', 'business'],
+                    color: 'gw-3',
+                    colorVar: '--dfm-c-cyan',
+                    deliverable: 'Data Contract for Fine-Tuning + Method Feasibility Matrix',
+                    dimensions: [
+                        {
+                            id: 'd3_1',
+                            tag: '3.1',
+                            title: 'Data Modality & Type',
+                            desc: 'Different modalities have very different training paths, costs, and maturity. Text training is fully mature, vision is officially supported, audio is emerging. Choose the modality consciously.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q3_1_1',
+                                    text: 'What modalities does the use case require?',
+                                    type: 'multi-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'text', label: 'Text / Documents' },
+                                        { value: 'code', label: 'Code' },
+                                        { value: 'structured', label: 'Structured / Tabular' },
+                                        { value: 'vision', label: 'Vision (images, diagrams, scans)' },
+                                        { value: 'audio', label: 'Audio / Voice' },
+                                        { value: 'timeseries', label: 'Time series / Sensor' }
+                                    ]
+                                },
+                                {
+                                    id: 'q3_1_2',
+                                    text: 'What is the input/output format?',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'pairs', label: 'Input-output pairs (instruction format)' },
+                                        { value: 'corpus', label: 'Unlabelled corpus (for DAPT)' },
+                                        { value: 'preferences', label: 'Preference pairs (for RLHF/DPO)' },
+                                        { value: 'trajectories', label: 'Trajectories (for agentic RL)' },
+                                        { value: 'mixed', label: 'Mixed — multiple formats' }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd3_2',
+                            tag: '3.2',
+                            title: 'Data Volume',
+                            desc: 'Different fine-tuning methods need different volumes. DAPT wants 10M+ tokens. SFT wants 5K-50K pairs. LoRA can work with 500-5K examples. Volume sets the method ceiling.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q3_2_1',
+                                    text: 'What is the usable corpus volume?',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'low', label: 'Low complexity: 1K-5K samples' },
+                                        { value: 'medium', label: 'Medium: 10K-50K samples' },
+                                        { value: 'high', label: 'High: 50K+ samples' },
+                                        { value: 'massive', label: 'Massive: 100K+ samples or 10M+ tokens' },
+                                        { value: 'insufficient', label: 'Insufficient — needs acquisition or synthetic' }
+                                    ]
+                                },
+                                {
+                                    id: 'q3_2_2',
+                                    text: 'Coverage across normal / edge / failure cases?',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'all', label: 'Strong coverage across all three' },
+                                        { value: 'normal_only', label: 'Normal cases only — edge cases missing' },
+                                        { value: 'imbalanced', label: 'Imbalanced — some cases over-represented' },
+                                        { value: 'unknown', label: 'Not yet characterised' }
+                                    ]
+                                },
+                                {
+                                    id: 'q3_2_3',
+                                    text: 'Is class / scenario / edge-case distribution balanced?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd3_3',
+                            tag: '3.3',
+                            title: 'Data Quality',
+                            desc: 'Authoritativeness, consistency, labelling reliability. Quality > quantity in modern fine-tuning. Inconsistent labels poison training in ways that more data cannot fix.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q3_3_1',
+                                    text: 'Is the data clean and consistent in structure?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q3_3_2',
+                                    text: 'Are there contradictory or conflicting labels?',
+                                    help: 'Same input with different labels is a labelling protocol failure.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q3_3_3',
+                                    text: 'What is the source authority profile?',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'auth', label: 'Authoritative — official, verified' },
+                                        { value: 'curated', label: 'Curated — internal but verified' },
+                                        { value: 'mixed', label: 'Mixed quality' },
+                                        { value: 'unverified', label: 'Largely unverified' }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd3_4',
+                            tag: '3.4',
+                            title: 'Compliance, PII & Regulatory',
+                            desc: 'Is PII present and handled? Are there data residency requirements? Were customer or employee recordings collected under consent that permits training? These are binding constraints — not preferences.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q3_4_1',
+                                    text: 'Is PII present in the data?',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'none', label: 'No PII' },
+                                        { value: 'present_anonymized', label: 'Present but anonymized / pseudonymized' },
+                                        { value: 'present_unhandled', label: 'Present — needs anonymization before training' },
+                                        { value: 'unknown', label: 'Not yet assessed' }
+                                    ]
+                                },
+                                {
+                                    id: 'q3_4_2',
+                                    text: 'Were the data collection terms / consent compatible with AI training use?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q3_4_3',
+                                    text: 'Are there regulatory restrictions on this data type?',
+                                    help: 'HIPAA, GDPR, GxP, financial sector restrictions.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q3_4_4',
+                                    text: 'Are there data residency requirements for training infrastructure?',
+                                    type: 'yes-no-partial'
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd3_5',
+                            tag: '3.5',
+                            title: 'Bias & Balance',
+                            desc: 'Systematic skew, missing segments, label bias, temporal bias. In regulated industries, biased AI is a legal exposure — not just a quality problem. Acquired bias is worse than insufficient data.',
+                            owner: 'sme',
+                            questions: [
+                                {
+                                    id: 'q3_5_1',
+                                    text: 'Is there systematic skew in the data?',
+                                    help: 'Over-represented populations, missing segments, historical bias in decisions.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q3_5_2',
+                                    text: 'Are any populations or segments entirely missing?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q3_5_3',
+                                    text: 'What are the sources of your training labels? (select all that apply)',
+                                    help: 'Most insidious bias failure — labels carry the prejudice forward into the model. Capturing all sources helps identify which subsets need bias remediation.',
+                                    type: 'multi-select',
+                                    options: [
+                                        { value: 'objective', label: 'Outcome-based, objective ground truth' },
+                                        { value: 'expert', label: 'Expert-validated annotations' },
+                                        { value: 'historical', label: 'Historical decisions — may carry bias' },
+                                        { value: 'crowdsource', label: 'Crowdsourced labels' },
+                                        { value: 'synthetic', label: 'Synthetically generated' },
+                                        { value: 'rules', label: 'Rule-based / programmatic' }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd3_6',
+                            tag: '3.6',
+                            title: 'SME Validation Capacity',
+                            desc: 'The often-overlooked binding constraint. Without SME bandwidth to define ground truth, validate outputs, and approve evaluation, the program stalls regardless of how good the data is.',
+                            owner: 'sme',
+                            questions: [
+                                {
+                                    id: 'q3_6_1',
+                                    text: 'Are labelling guidelines documented?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q3_6_2',
+                                    text: 'Are ground truth definitions agreed?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q3_6_3',
+                                    text: 'Is SME time committed for validation cycles?',
+                                    help: 'Named SMEs, named hours per week, in writing.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q3_6_4',
+                                    text: 'Are edge case scenarios catalogued by SMEs?',
+                                    type: 'yes-no-partial'
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd3_7',
+                            tag: '3.7',
+                            title: 'Historic Intelligence & Competitive Data',
+                            desc: 'Does the organisation hold historic decision data, expert judgements, or internal intelligence that no other organisation has? This is often the strongest argument for fine-tuning — the data itself is the competitive moat. Public models can be prompted; proprietary intelligence captured in a trained model cannot be replicated by competitors.',
+                            owner: 'business',
+                            questions: [
+                                {
+                                    id: 'q3_7_1',
+                                    text: 'Does the organisation hold historic intelligence data unique to itself?',
+                                    help: 'Past decisions, expert judgements, case outcomes, internal records, proprietary research, deal histories, customer interactions — data that competitors do not have.',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'none', label: 'No — all relevant data is from public or shared sources' },
+                                        { value: 'limited', label: 'Limited — some unique internal data exists' },
+                                        { value: 'substantial', label: 'Substantial — significant body of proprietary historic data' },
+                                        { value: 'extensive', label: 'Extensive — decades of unique institutional intelligence' }
+                                    ]
+                                },
+                                {
+                                    id: 'q3_7_2',
+                                    text: 'What time span does this historic intelligence cover?',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'recent', label: 'Recent — last 1-2 years' },
+                                        { value: 'medium', label: 'Medium — 3-7 years' },
+                                        { value: 'long', label: 'Long — 7-15 years' },
+                                        { value: 'deep', label: 'Deep historical — 15+ years' }
+                                    ]
+                                },
+                                {
+                                    id: 'q3_7_3',
+                                    text: 'Does this data capture proprietary insights, judgements, or patterns?',
+                                    help: 'Tacit knowledge encoded in past decisions — the kind of pattern recognition that took the organisation years to develop.',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q3_7_4',
+                                    text: 'Would training on this data create competitive differentiation that prompting alone cannot?',
+                                    help: 'The key strategic question. If yes, this is one of the strongest cases for fine-tuning. If no, alternatives may suffice.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q3_7_5',
+                                    text: 'Is this historic data clean enough for training, or does it carry historical bias?',
+                                    help: 'Decades-old decisions may reflect outdated practices or accumulated bias. Training without filtering propagates these forward.',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'clean', label: 'Clean — represents current best practice' },
+                                        { value: 'mixed', label: 'Mixed — some outdated patterns, but mostly usable' },
+                                        { value: 'concerning', label: 'Concerning — significant outdated bias requires filtering' },
+                                        { value: 'unusable', label: 'Largely unusable without major curation' }
+                                    ]
+                                },
+                                {
+                                    id: 'q3_7_6',
+                                    text: 'Is this historic data legally usable for training under existing collection terms?',
+                                    help: 'Old data was often collected under terms that did not anticipate AI training use. Legal review required.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                }
+                            ]
+                        }
+                    ]
+                },
+
+                // ════════════════════════════════════════════════════════════════════════
+                // GATE 4 — MODEL DESIGN & TUNING STRATEGY
+                // ════════════════════════════════════════════════════════════════════════
+                {
+                    id: 'gate4',
+                    num: '04',
+                    title: 'Model Design & Tuning Strategy',
+                    eyebrow: 'Gate · Data Scientist Lead',
+                    intro: 'The technical execution plan. Base model shortlisted, tuning approach selected, modality and language coverage confirmed, infrastructure constraints captured. This gate produces the Fine-Tuning Technical Plan that goes into execution.',
+                    owners: ['ds'],
+                    color: 'gw-4',
+                    colorVar: '--dfm-c-amber',
+                    deliverable: 'Fine-Tuning Technical Plan with model, method, infrastructure, cost estimate',
+                    dimensions: [
+                        {
+                            id: 'd4_1',
+                            tag: '4.1',
+                            title: 'Base Model Selection',
+                            desc: 'Which base model serves as the foundation? Decision depends on modality, capability tier, context window needs, language coverage, and the long-term roadmap of the model family.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q4_1_1',
+                                    text: 'Have 2-3 base model candidates been shortlisted?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q4_1_2',
+                                    text: 'Candidate base model category',
+                                    help: 'Categorise by capability tier and openness. Specific model identification happens after this gate, once the category is chosen.',
+                                    type: 'multi-select',
+                                    options: [
+                                        { value: 'frontier_proprietary', label: 'Frontier proprietary (used as benchmark; usually not fine-tunable)' },
+                                        { value: 'large_open', label: 'Large open-weight (general purpose, 70B+ class)' },
+                                        { value: 'medium_open', label: 'Medium open-weight instruction-tuned (7B-30B)' },
+                                        { value: 'small_open', label: 'Small open-weight efficient (1B-7B, edge-suitable)' },
+                                        { value: 'domain_specialized', label: 'Domain-specialized open-weight (already fine-tuned for industry)' },
+                                        { value: 'vision_language', label: 'Vision-language model' },
+                                        { value: 'audio_language', label: 'Audio / speech-language model' },
+                                        { value: 'multimodal', label: 'Multi-modal (vision + text + audio)' },
+                                        { value: 'custom', label: 'Other / custom architecture' }
+                                    ]
+                                },
+                                {
+                                    id: 'q4_1_3',
+                                    text: 'What model size / capability tier?',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'small', label: 'Small (1B-10B params)' },
+                                        { value: 'medium', label: 'Medium (10B-30B params)' },
+                                        { value: 'large', label: 'Large (30B-100B params)' },
+                                        { value: 'frontier', label: 'Frontier (100B+ params)' }
+                                    ]
+                                },
+                                {
+                                    id: 'q4_1_4',
+                                    text: 'Has evaluation baseline been defined for candidates?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd4_2',
+                            tag: '4.2',
+                            title: 'Tuning Approach',
+                            desc: 'Which method (or combination)? Instruction tuning, LoRA/PEFT, full fine-tuning, DAPT, RLHF, agentic RL. Most production stacks combine methods — DAPT → SFT → DPO is common.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q4_2_1',
+                                    text: 'Tuning methods being considered (select all that apply)',
+                                    help: 'Most production stacks combine methods in sequence — e.g., DAPT first to embed domain, then SFT to teach tasks, then DPO to refine preferences. Select all methods you anticipate using.',
+                                    type: 'multi-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'cpt', label: 'CPT — Continued Pre-Training' },
+                                        { value: 'dapt', label: 'DAPT — Domain-Adaptive Pre-Training' },
+                                        { value: 'sft', label: 'SFT — Supervised Instruction Tuning' },
+                                        { value: 'lora', label: 'LoRA / PEFT — Parameter-Efficient' },
+                                        { value: 'rlhf', label: 'RLHF — Reinforcement from Human Feedback' },
+                                        { value: 'dpo', label: 'DPO — Direct Preference Optimization' },
+                                        { value: 'agentic', label: 'Agentic RL — Multi-step Reasoning' },
+                                        { value: 'full', label: 'Full Fine-Tuning (all parameters)' },
+                                        { value: 'synthetic', label: 'Synthetic Data Augmentation' }
+                                    ]
+                                },
+                                {
+                                    id: 'q4_2_2',
+                                    text: 'Is the tuning approach a sequenced stack?',
+                                    help: 'e.g., DAPT → SFT → DPO. Most production stacks combine methods.',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q4_2_3',
+                                    text: 'Have gating criteria between stages been defined?',
+                                    help: 'Stage 1 must pass benchmark X before Stage 2 begins.',
+                                    type: 'yes-no-partial'
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd4_3',
+                            tag: '4.3',
+                            title: 'Modality, Language & Context Requirements',
+                            desc: 'Beyond text. Multilingual coverage requirements, context window size needs, multimodal capability — these can rule out base models that otherwise look attractive.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q4_3_1',
+                                    text: 'Language coverage requirement',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'english', label: 'English only' },
+                                        { value: 'european', label: 'English + European languages' },
+                                        { value: 'asian', label: 'English + Asian languages' },
+                                        { value: 'multilingual', label: 'Broad multilingual (10+)' }
+                                    ]
+                                },
+                                {
+                                    id: 'q4_3_2',
+                                    text: 'Required context window size',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'short', label: 'Short — up to 8K tokens' },
+                                        { value: 'medium', label: 'Medium — 8K-32K tokens' },
+                                        { value: 'long', label: 'Long — 32K-128K tokens' },
+                                        { value: 'very_long', label: 'Very long — 128K+ tokens' }
+                                    ]
+                                },
+                                {
+                                    id: 'q4_3_3',
+                                    text: 'Modality requirements aligned with base model maturity?',
+                                    help: 'Text fully mature; vision official; audio emerging.',
+                                    type: 'yes-no-partial'
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd4_4',
+                            tag: '4.4',
+                            title: 'Task Characteristics',
+                            desc: 'Structured output requirements, reasoning needs, tool-calling — these shape both model choice and training data design.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q4_4_1',
+                                    text: 'Does the task require structured output?',
+                                    help: 'JSON, XML, specific schema — important for downstream integration.',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q4_4_2',
+                                    text: 'Does the task require multi-step reasoning?',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q4_4_3',
+                                    text: 'Does the task require tool calling / function calling?',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q4_4_4',
+                                    text: 'Does the task require code generation?',
+                                    type: 'yes-no-partial'
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd4_5',
+                            tag: '4.5',
+                            title: 'Infrastructure & Constraints',
+                            desc: 'Latency, cost, deployment environment. A perfectly capable model that doesn\'t meet latency SLAs or fits the deployment environment is a model that won\'t be used.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q4_5_1',
+                                    text: 'Latency SLA target',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'realtime', label: 'Real-time (<200ms P95)' },
+                                        { value: 'interactive', label: 'Interactive (200ms-2s)' },
+                                        { value: 'batch', label: 'Batch (seconds to minutes)' },
+                                        { value: 'async', label: 'Asynchronous (no hard limit)' }
+                                    ]
+                                },
+                                {
+                                    id: 'q4_5_2',
+                                    text: 'Cost per query target defined?',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q4_5_3',
+                                    text: 'Deployment environment (select all that apply)',
+                                    help: 'Some use cases deploy to multiple environments — e.g., cloud for back-office, edge for branch operations.',
+                                    type: 'multi-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'cloud', label: 'Cloud (managed)' },
+                                        { value: 'onprem', label: 'On-premises' },
+                                        { value: 'edge', label: 'Edge / device' },
+                                        { value: 'private_cloud', label: 'Private cloud / VPC' },
+                                        { value: 'air_gapped', label: 'Air-gapped (isolated network)' }
+                                    ]
+                                },
+                                {
+                                    id: 'q4_5_4',
+                                    text: 'Infrastructure / compute estimate calculated?',
+                                    type: 'yes-no-partial'
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd4_6',
+                            tag: '4.6',
+                            title: 'Domain Adaptation Decision (DAPT vs SFT-Only)',
+                            desc: 'The critical method-selection decision. If the domain is highly niche with new vocabulary and unique historic intelligence (Gates 2.5 and 3.7), Domain-Adaptive Pre-Training (DAPT) before SFT is usually the right path — it embeds domain understanding into the model itself rather than overlaying it. If the gap is purely behavioural or formatting, SFT or LoRA alone may suffice. This dimension forces an explicit reasoning step.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q4_6_1',
+                                    text: 'Based on niche-ness assessment (Gate 2.5), is DAPT required?',
+                                    help: 'High niche-ness + extensive new vocabulary + critical hallucination risk = DAPT essential. Low niche-ness + standard vocabulary = SFT may suffice.',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'dapt_essential', label: 'DAPT essential — domain too niche, hallucination risk too high without it' },
+                                        { value: 'dapt_beneficial', label: 'DAPT beneficial — would meaningfully improve outcomes' },
+                                        { value: 'sft_sufficient', label: 'SFT sufficient — domain coverage in base model adequate' },
+                                        { value: 'lora_sufficient', label: 'LoRA-only sufficient — narrow task on adequate base' }
+                                    ]
+                                },
+                                {
+                                    id: 'q4_6_2',
+                                    text: 'Is corpus volume adequate for DAPT?',
+                                    help: 'DAPT typically requires ≥10M tokens of domain corpus, ideally 100M+. If recommending DAPT but lacking volume, synthetic augmentation may be needed.',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'abundant', label: 'Abundant — 100M+ tokens of domain text' },
+                                        { value: 'adequate', label: 'Adequate — 10M-100M tokens' },
+                                        { value: 'marginal', label: 'Marginal — 1M-10M tokens; needs augmentation' },
+                                        { value: 'insufficient', label: 'Insufficient — DAPT not feasible without major data acquisition' },
+                                        { value: 'na', label: 'N/A — DAPT not the chosen path' }
+                                    ]
+                                },
+                                {
+                                    id: 'q4_6_3',
+                                    text: 'Will historic intelligence data (Gate 3.7) be used for training?',
+                                    help: 'If yes, this is a strong competitive moat argument. The training method (DAPT or extensive SFT) should be designed around this data.',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q4_6_4',
+                                    text: 'Recommended training stack sequence',
+                                    help: 'Pick a starting point from the sample stacks below if helpful, then refine in your own words. Most production stacks combine methods — there is rarely a single "right" answer, but there is usually a right combination for your situation.',
+                                    type: 'select-and-text',
+                                    required: true,
+                                    options: [
+                                        {
+                                            value: 'cpt_dapt_sft_rlhf',
+                                            shortLabel: 'CPT → DAPT → SFT → RLHF',
+                                            label: 'CPT → DAPT → SFT → RLHF. Continued Pre-Training to extend base model competence, then Domain-Adaptive Pre-Training on the corpus to embed domain understanding, then Supervised Fine-Tuning on instruction-response pairs to teach task-specific behaviour, then RLHF or DPO to refine preferences. Use when the domain is fundamentally new to base models and competitive moat depends on deep domain absorption.'
+                                        },
+                                        {
+                                            value: 'dapt_sft_dpo',
+                                            shortLabel: 'DAPT → SFT → DPO',
+                                            label: 'DAPT → SFT → DPO. Domain-Adaptive Pre-Training first to embed niche vocabulary and proprietary patterns, then Supervised Fine-Tuning on curated instruction pairs, then Direct Preference Optimization to align with expert-preferred outputs. Use for highly niche domains with significant historic intelligence and SME-validated preference data.'
+                                        },
+                                        {
+                                            value: 'dapt_sft',
+                                            shortLabel: 'DAPT → SFT',
+                                            label: 'DAPT → SFT. Domain-Adaptive Pre-Training followed by Supervised Fine-Tuning. Use when the domain has specialised vocabulary requiring adaptation, but behavioural alignment is straightforward and preference data is not available.'
+                                        },
+                                        {
+                                            value: 'sft_dpo',
+                                            shortLabel: 'SFT → DPO',
+                                            label: 'SFT → DPO. Supervised Fine-Tuning followed by Direct Preference Optimization. Use when domain coverage in base model is adequate, but task-specific behaviour and output style need shaping. Preference data is available from SMEs.'
+                                        },
+                                        {
+                                            value: 'sft_only',
+                                            shortLabel: 'SFT only',
+                                            label: 'SFT only. Supervised Fine-Tuning is sufficient. Use when you have clear input-output examples for a narrow, well-defined task and the base model already handles the domain adequately.'
+                                        },
+                                        {
+                                            value: 'lora_only',
+                                            shortLabel: 'LoRA / PEFT only',
+                                            label: 'LoRA / PEFT only. Parameter-efficient fine-tuning of a small subset of weights. Use for narrow task specialisation on top of an already-capable model when full fine-tuning is not justified by ROI or infrastructure.'
+                                        },
+                                        {
+                                            value: 'agentic',
+                                            shortLabel: 'Agentic RL',
+                                            label: 'Agentic RL. Reinforcement learning where the model is trained to perform multi-step actions with environment feedback. Use when the value lies in tool-using sequences and reasoning chains rather than single-turn outputs.'
+                                        }
+                                    ],
+                                    placeholder: 'Describe the recommended training stack sequence in your own words. Include the order of training stages, why each stage is included, and the gating criteria between stages. e.g., "Stage 1: DAPT on 80M tokens of internal investigation notes to embed AML typology vocabulary. Gating: domain perplexity < X. Stage 2: SFT on 12K curated alert-narrative pairs..."'
+                                },
+                                {
+                                    id: 'q4_6_5',
+                                    text: 'Is replay / interleaved data planned to prevent catastrophic forgetting?',
+                                    help: 'When DAPT or full fine-tuning is used, the model can lose general capabilities. Mixing in general data during training prevents this.',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q4_6_6',
+                                    text: 'Justification for the chosen training stack',
+                                    help: 'Free-text — explain why this combination, in this sequence, for this use case.',
+                                    type: 'text',
+                                    long: true
+                                }
+                            ]
+                        }
+                    ]
+                },
+
+                // ════════════════════════════════════════════════════════════════════════
+                // GATE 5 — RISK, GOVERNANCE & CONTROL
+                // ════════════════════════════════════════════════════════════════════════
+                {
+                    id: 'gate5',
+                    num: '05',
+                    title: 'Risk, Governance & Control',
+                    eyebrow: 'Gate · Business + Risk',
+                    intro: 'Controlled deployment design. What is the risk classification? When is human-in-the-loop mandatory? What thresholds gate outputs? What is the fallback when the model is uncertain or wrong? Built in from day one — not retrofitted under regulatory pressure.',
+                    owners: ['business', 'risk'],
+                    color: 'gw-5',
+                    colorVar: '--dfm-c-rose',
+                    deliverable: 'Risk Matrix + Control Mechanisms + Escalation & Fallback Design',
+                    dimensions: [
+                        {
+                            id: 'd5_1',
+                            tag: '5.1',
+                            title: 'Risk Level Classification',
+                            desc: 'High-risk use cases — those affecting safety, finance, employment, or fundamental rights — carry obligations under EU AI Act and equivalent frameworks. Classification drives controls.',
+                            owner: 'risk',
+                            questions: [
+                                {
+                                    id: 'q5_1_1',
+                                    text: 'Risk level classification',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'low', label: 'Low — informational, easily reversed' },
+                                        { value: 'medium', label: 'Medium — material impact, reversible' },
+                                        { value: 'high', label: 'High — significant impact on individuals' },
+                                        { value: 'critical', label: 'Critical — safety, fundamental rights, irreversible' }
+                                    ]
+                                },
+                                {
+                                    id: 'q5_1_2',
+                                    text: 'Does the use case fall under EU AI Act high-risk (or equivalent)?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q5_1_3',
+                                    text: 'Is human-in-the-loop mandatory?',
+                                    help: 'For high-risk and critical use cases, this is typically a legal requirement, not a choice.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd5_2',
+                            tag: '5.2',
+                            title: 'Output Control & Thresholds',
+                            desc: 'What confidence thresholds gate outputs? What conditions trigger rejection? What is escalated and to whom? Defined upfront — not discovered in production.',
+                            owner: 'risk',
+                            questions: [
+                                {
+                                    id: 'q5_2_1',
+                                    text: 'Are pass/fail confidence thresholds defined?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q5_2_2',
+                                    text: 'Are rejection conditions defined (when model should abstain)?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q5_2_3',
+                                    text: 'Are escalation rules defined (when and to whom)?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd5_3',
+                            tag: '5.3',
+                            title: 'Fallback Strategy',
+                            desc: 'What happens when the fine-tuned model is uncertain, unavailable, or wrong? Base model fallback, rule-based fallback, human escalation — designed before deployment.',
+                            owner: 'risk',
+                            questions: [
+                                {
+                                    id: 'q5_3_1',
+                                    text: 'Is there a base model fallback?',
+                                    help: 'When fine-tuned model lacks confidence, defer to a more general (and possibly larger) base model.',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q5_3_2',
+                                    text: 'Is there a rule-based fallback?',
+                                    help: 'Deterministic rules that handle edge cases the model isn\'t trusted on.',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q5_3_3',
+                                    text: 'Is there a human escalation path?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd5_4',
+                            tag: '5.4',
+                            title: 'Governance Integration',
+                            desc: 'Model risk management framework, audit trail, version lineage, access control. In regulated industries this is mandatory.',
+                            owner: 'risk',
+                            questions: [
+                                {
+                                    id: 'q5_4_1',
+                                    text: 'Is the applicable model risk framework named?',
+                                    help: 'e.g., SR 11-7 in US banking, equivalents elsewhere.',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q5_4_2',
+                                    text: 'Is model lineage documentation specified?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q5_4_3',
+                                    text: 'Is the model registered in central model inventory?',
+                                    type: 'yes-no-partial'
+                                }
+                            ]
+                        }
+                    ]
+                },
+
+                // ════════════════════════════════════════════════════════════════════════
+                // GATE 6 — EVALUATION & ACCEPTANCE CRITERIA
+                // ════════════════════════════════════════════════════════════════════════
+                {
+                    id: 'gate6',
+                    num: '06',
+                    title: 'Evaluation & Acceptance Criteria',
+                    eyebrow: 'Gate · DS + SME + Business',
+                    intro: 'Success definition. Metrics that map to business KPIs. Test strategy including blind testing and edge cases. SME validation tasks. Acceptance thresholds. Go-live conditions. Without these defined before training, the program survives on faith rather than evidence.',
+                    owners: ['ds', 'sme', 'business'],
+                    color: 'gw-6',
+                    colorVar: '--dfm-c-emerald',
+                    deliverable: 'Acceptance Criteria Template + Go-Live Definition',
+                    dimensions: [
+                        {
+                            id: 'd6_1',
+                            tag: '6.1',
+                            title: 'Performance Metrics',
+                            desc: 'What metrics define success? Accuracy, F1, hallucination rate, consistency, latency — calibrated to the use case rather than copy-pasted from generic benchmarks.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q6_1_1',
+                                    text: 'Are KPI-aligned metrics defined?',
+                                    help: 'Not generic benchmarks — metrics that tie to the business outcome.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q6_1_2',
+                                    text: 'Is hallucination rate measurement defined?',
+                                    help: 'Critical for any generative use case.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q6_1_3',
+                                    text: 'Is consistency measurement defined?',
+                                    help: 'Same input must give similar quality output across runs.',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q6_1_4',
+                                    text: 'Is latency measurement defined?',
+                                    type: 'yes-no-partial'
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd6_2',
+                            tag: '6.2',
+                            title: 'Test Strategy',
+                            desc: 'Benchmark dataset, blind testing, edge case testing. The test set must be representative of production — not just convenient samples.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q6_2_1',
+                                    text: 'Is a benchmark dataset prepared (held out from training)?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q6_2_2',
+                                    text: 'Is blind testing planned (model doesn\'t see test set during dev)?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q6_2_3',
+                                    text: 'Is edge case testing planned?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q6_2_4',
+                                    text: 'Is adversarial / red team testing planned?',
+                                    help: 'Stress test for jailbreaks, prompt injection, harmful outputs.',
+                                    type: 'yes-no-partial'
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd6_3',
+                            tag: '6.3',
+                            title: 'SME Validation Plan',
+                            desc: 'SME has specific responsibilities here — reviewing sample outputs, validating business correctness, approving usability. Without SME engagement on evaluation, the model may pass technical tests but fail business acceptance.',
+                            owner: 'sme',
+                            questions: [
+                                {
+                                    id: 'q6_3_1',
+                                    text: 'Is SME review of sample outputs planned?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q6_3_2',
+                                    text: 'Is SME validation of business correctness scheduled?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q6_3_3',
+                                    text: 'Is SME approval of usability scheduled?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd6_4',
+                            tag: '6.4',
+                            title: 'Acceptance Thresholds',
+                            desc: 'Specific numerical thresholds for go-live. Accuracy ≥ X%, consistency ≥ Y%, edge case handling ≥ Z. Negotiated upfront with business — not at the end when expectations have hardened.',
+                            owner: 'business',
+                            questions: [
+                                {
+                                    id: 'q6_4_1',
+                                    text: 'Is accuracy threshold defined?',
+                                    help: 'Specific number, agreed with business.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q6_4_2',
+                                    text: 'Is consistency threshold defined?',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q6_4_3',
+                                    text: 'Is edge case handling threshold defined?',
+                                    type: 'yes-no-partial'
+                                },
+                                {
+                                    id: 'q6_4_4',
+                                    text: 'Is SME approval treated as mandatory or advisory?',
+                                    type: 'single-select',
+                                    required: true,
+                                    options: [
+                                        { value: 'mandatory', label: 'Mandatory — no go-live without SME sign-off' },
+                                        { value: 'advisory', label: 'Advisory — SME input weighed but not binding' }
+                                    ]
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd6_5',
+                            tag: '6.5',
+                            title: 'Go-Live Conditions',
+                            desc: 'What must be true for the model to enter production? Performance bar passed, governance sign-off, monitoring in place, fallback tested, rollback plan defined.',
+                            owner: 'business',
+                            questions: [
+                                {
+                                    id: 'q6_5_1',
+                                    text: 'Is production monitoring designed?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q6_5_2',
+                                    text: 'Is rollback plan tested?',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q6_5_3',
+                                    text: 'Are go-live sign-off authorities named?',
+                                    help: 'Specifically who signs off — business, risk, technical.',
+                                    type: 'yes-no-partial',
+                                    required: true
+                                },
+                                {
+                                    id: 'q6_5_4',
+                                    text: 'Is post-go-live review cadence defined?',
+                                    type: 'yes-no-partial'
+                                }
+                            ]
+                        }
+                    ]
+                },
+                // ════════════════════════════════════════════════════════════════════════
+                // GATE 7 — RECOMMENDATIONS, TECH PLATFORM & CONSULTING OBSERVATIONS
+                // ════════════════════════════════════════════════════════════════════════
+                {
+                    id: 'gate7',
+                    num: '07',
+                    title: 'Recommendations & Tech Platform',
+                    eyebrow: 'Gate · Consulting Recommendations · Free-Text Synthesis',
+                    intro: 'The consultant\'s recommendation gate. Free-text capture of tech platforms, recommended base models, training infrastructure, primary observations, and strategic guidance for the customer. This gate is intentionally open-ended — it is where consulting judgement gets recorded in plain words, not multiple-choice. Everything captured here feeds directly into the final LLM-generated report.',
+                    owners: ['ds', 'business'],
+                    color: 'gw-6',
+                    deliverable: 'Consulting Recommendations Document — platforms, models, observations, next steps',
+                    dimensions: [
+                        {
+                            id: 'd7_1',
+                            tag: '7.1',
+                            title: 'Recommended Tech Platforms',
+                            desc: 'Which fine-tuning platforms and infrastructure are recommended for this engagement? Capture platform names, why they fit this use case, and any considerations or trade-offs. This is free-text — no preset list, because the right answer depends entirely on the customer\'s context, existing infrastructure, vendor relationships, and regulatory constraints.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q7_1_1',
+                                    text: 'Recommended fine-tuning platforms / frameworks',
+                                    help: 'e.g., Mistral Forge, NVIDIA NeMo, AWS Bedrock, Azure AI Foundry, Google Vertex AI, Databricks Mosaic AI, Hugging Face TRL, in-house infrastructure, etc. Name the candidates and briefly note why each is being considered.',
+                                    type: 'text',
+                                    long: true,
+                                    placeholder: 'Example: "Primary candidate: NVIDIA NeMo on customer\'s existing GPU infrastructure — aligns with on-prem data residency requirements. Secondary: Azure AI Foundry for SFT/LoRA workloads if customer prefers managed service. Considered and de-prioritised: AWS Bedrock — customer has limited AWS footprint."'
+                                },
+                                {
+                                    id: 'q7_1_2',
+                                    text: 'Reasons for platform recommendations',
+                                    help: 'What specifically makes the recommended platform(s) the right choice for this customer? Consider: data residency, existing vendor relationships, in-house skills, regulatory posture, cost economics, integration ecosystem, support quality.',
+                                    type: 'text',
+                                    long: true,
+                                    placeholder: 'Free-form analysis of why these platforms fit this customer specifically...'
+                                },
+                                {
+                                    id: 'q7_1_3',
+                                    text: 'Platform trade-offs and risks identified',
+                                    help: 'No platform is perfect. What are the known limitations of the recommended platform(s) for this use case? Capture vendor lock-in concerns, missing features, roadmap risks, ecosystem maturity, support coverage.',
+                                    type: 'text',
+                                    long: true
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd7_2',
+                            tag: '7.2',
+                            title: 'Recommended Base Models',
+                            desc: 'Specific base model candidates recommended for this engagement. Goes beyond the category selection in Gate 4 — name the specific models (Mistral Large 2, Llama 3.1 70B, Qwen 2.5, etc.) and explain why each fits.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q7_2_1',
+                                    text: 'Specific recommended base models',
+                                    help: 'Name specific models being considered. Include version numbers, parameter counts, key capabilities relevant to the use case.',
+                                    type: 'text',
+                                    long: true,
+                                    placeholder: 'Example: "Primary: Mistral Large 2 (123B) — strong multilingual coverage matches APAC requirement, available for fine-tuning via Mistral Forge. Backup: Llama 3.1 70B — open weights, good reasoning, deployable on-prem. Considered: Qwen 2.5 72B — strong for Chinese content but customer prefers Western-developed models for governance reasons."'
+                                },
+                                {
+                                    id: 'q7_2_2',
+                                    text: 'Justification for base model choice',
+                                    help: 'Why these specific models? Consider: domain coverage in pretraining, fine-tuning stability, language coverage, license terms, deployment flexibility, support lifecycle.',
+                                    type: 'text',
+                                    long: true
+                                },
+                                {
+                                    id: 'q7_2_3',
+                                    text: 'Models considered and rejected',
+                                    help: 'What was looked at and decided against? Important to record — prevents revisiting the same conversation later and provides evidence trail for governance review.',
+                                    type: 'text',
+                                    long: true
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd7_3',
+                            tag: '7.3',
+                            title: 'Primary Consulting Observations',
+                            desc: 'The single most important section of this gate. Free-form observations about the engagement — what stood out, what concerns the consultant, what should the customer hear loudly. This is where consulting expertise gets recorded in unfiltered form.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q7_3_1',
+                                    text: 'Top 3-5 observations from this engagement',
+                                    help: 'What are the most important things to communicate to the customer? Be candid. This is the section the LLM will rely on most heavily when writing the final executive summary.',
+                                    type: 'text',
+                                    long: true,
+                                    placeholder: 'Example observations:\n1. Customer underestimates SME bandwidth required — currently allocated 2 hrs/week, will realistically need 8-10 hrs/week during training cycles.\n2. Historic case data is the moat — 15 years of investigator notes is genuinely unique and worth fine-tuning around. Competitors cannot replicate this.\n3. Hallucination risk is high without DAPT — domain typology vocabulary is sufficiently niche that prompted base models confabulate.\n4. Governance posture is mature — Model Risk team is engaged early, which de-risks production rollout significantly.\n5. ROI case is conservative — actual time savings likely 2-3x the stated baseline.'
+                                },
+                                {
+                                    id: 'q7_3_2',
+                                    text: 'Concerns / risks the customer should be aware of',
+                                    help: 'The things you would say to the customer if asked privately. Better captured here than discovered later.',
+                                    type: 'text',
+                                    long: true
+                                },
+                                {
+                                    id: 'q7_3_3',
+                                    text: 'Opportunities beyond the immediate use case',
+                                    help: 'Adjacent use cases this work would unlock. Future SLMs that could share an ODFM foundation. Capability uplift opportunities for the customer\'s broader AI program.',
+                                    type: 'text',
+                                    long: true
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd7_4',
+                            tag: '7.4',
+                            title: 'Recommended Next Steps & Timeline',
+                            desc: 'The consulting recommendation in operational form — what should happen, in what sequence, over what timeline. Free-text by design — every engagement\'s next steps are unique.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q7_4_1',
+                                    text: 'Recommended next steps (sequenced)',
+                                    help: 'Specific actions, in sequence, with owners. From "today" through "production deployment".',
+                                    type: 'text',
+                                    long: true,
+                                    placeholder: 'Example:\n1. Week 1-2: Legal review of training data consent terms (Owner: Customer Legal)\n2. Week 2-4: Data extraction and PII handling pipeline (Owner: TCS Data Engineering)\n3. Week 3-5: SFT corpus curation with SME validation (Owner: Customer SMEs + TCS DS)\n4. Week 5-8: DAPT training run on baseline corpus (Owner: TCS DS)\n5. Week 8-10: SFT training and evaluation (Owner: TCS DS)\n6. Week 10-12: SME validation cycles and refinement (Owner: Customer SMEs)\n7. Week 12-14: Risk and governance review (Owner: Customer Model Risk)\n8. Week 14-16: Production deployment and monitoring setup (Owner: TCS Engineering + Customer Ops)'
+                                },
+                                {
+                                    id: 'q7_4_2',
+                                    text: 'Critical path dependencies',
+                                    help: 'What blocks what? Where are the schedule risks? Most engagements have 1-2 critical-path items that determine the timeline; surface them.',
+                                    type: 'text',
+                                    long: true
+                                },
+                                {
+                                    id: 'q7_4_3',
+                                    text: 'Decision points where customer must commit',
+                                    help: 'The moments where customer decision-making is required — and what the decision options will be at each point.',
+                                    type: 'text',
+                                    long: true
+                                }
+                            ]
+                        },
+                        {
+                            id: 'd7_5',
+                            tag: '7.5',
+                            title: 'Overall Consulting Recommendation',
+                            desc: 'The summary recommendation in the consultant\'s own words. This is what gets paraphrased into the executive summary of the final report. Make it sharp, evidence-based, and directive.',
+                            owner: 'ds',
+                            questions: [
+                                {
+                                    id: 'q7_5_1',
+                                    text: 'Final consulting recommendation',
+                                    help: 'In 2-4 paragraphs: what should the customer do, why, and with what conditions? This is the central recommendation the report will be built around.',
+                                    type: 'text',
+                                    long: true,
+                                    placeholder: 'Example: "We recommend proceeding with fine-tuning execution. The combination of highly niche domain vocabulary, 15 years of unique historic data, and a mature governance posture makes this a textbook case for domain adaptation. The recommended training stack is DAPT → SFT → DPO, executed on NVIDIA NeMo against customer\'s on-prem GPU infrastructure.\n\nThe primary risks are SME bandwidth (likely underestimated by 3-5×) and the legal review of training data consent (must complete in weeks 1-2 or the entire timeline slips). With these mitigated, we expect a production-ready SLM in 14-16 weeks and ROI realization within 9 months of go-live.\n\nThis engagement also positions the customer for follow-on SLMs sharing the same ODFM foundation — likely candidates include adjacent use cases, with significantly lower per-model cost once the ODFM exists."'
+                                },
+                                {
+                                    id: 'q7_5_2',
+                                    text: 'Confidence level in this recommendation',
+                                    type: 'single-select',
+                                    options: [
+                                        { value: 'high', label: 'High — strong evidence base, clear path forward' },
+                                        { value: 'medium_high', label: 'Medium-High — recommendation sound, some assumptions to validate' },
+                                        { value: 'medium', label: 'Medium — recommendation reasonable but several unknowns' },
+                                        { value: 'low', label: 'Low — significant uncertainty; recommendation contingent on resolving open items' }
+                                    ]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ];
+
+            /* ═══════════════════════════════════════════════════════════════════════════
+               GLOBAL STATE
+               ═══════════════════════════════════════════════════════════════════════════ */
+            let STATE = {
+                meta: {
+                    assessmentName: '',
+                    client: '',
+                    industry: '',
+                    leadConsultant: '',
+                    startedAt: null,
+                    lastUpdatedAt: null,
+                    frameworkVersion: 'v3.0'
+                },
+                answers: {},        // { questionId: value }
+                notes: {},          // { dimensionId: free-text notes }
+                verdicts: {},       // { dimensionId: 'pass' | 'fail' | 'pending' }
+                rationales: {},     // { dimensionId: rationale text for verdict }
+                currentGate: null
+            };
+
+            const STORAGE_KEY = 'tcs-domain-ai-v3';
+
+            /* ═══════════════════════════════════════════════════════════════════════════
+               UTILITIES
+               ═══════════════════════════════════════════════════════════════════════════ */
+            function escapeHtml(s) {
+                if (s === undefined || s === null) return '';
+                return String(s).replace(/[<>&'"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&#39;', '"': '&quot;' })[c]);
+            }
+            function escapeXml(s) {
+                if (s === undefined || s === null) return '';
+                return String(s).replace(/[<>&'"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[c]);
+            }
+
+            /* ═══════════════════════════════════════════════════════════════════════════
+               MODE SWITCHING
+               ═══════════════════════════════════════════════════════════════════════════ */
+            function switchMode(mode) {
+                document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+                document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+                if (mode === 'doc') {
+                    document.getElementById('view-doc').classList.add('active');
+                    document.getElementById('mode-doc').classList.add('active');
+                } else {
+                    document.getElementById('view-assess').classList.add('active');
+                    document.getElementById('mode-assess').classList.add('active');
+                    if (!STATE.meta.startedAt) {
+                        renderAssessorEmpty();
+                    } else {
+                        renderAssessor();
+                    }
+                }
+            }
+
+            /* ═══════════════════════════════════════════════════════════════════════════
+               STORAGE
+               ═══════════════════════════════════════════════════════════════════════════ */
+            function saveState() {
+                STATE.meta.lastUpdatedAt = new Date().toISOString();
+                try { localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE)); }
+                catch (e) { console.warn('Save failed', e); }
+            }
+            function loadState() {
+                try {
+                    const raw = localStorage.getItem(STORAGE_KEY);
+                    if (raw) STATE = JSON.parse(raw);
+                } catch (e) { console.warn('Load failed', e); }
+            }
+
+            /* ═══════════════════════════════════════════════════════════════════════════
+               ASSESSMENT LIFECYCLE
+               ═══════════════════════════════════════════════════════════════════════════ */
+            function startNewAssessment() {
+                switchMode('assess');
+                renderAssessorEmpty();
+            }
+
+            function commitNewAssessment() {
+                const name = document.getElementById('input-assess-name').value.trim();
+                const client = document.getElementById('input-assess-client').value.trim();
+                const industry = document.getElementById('input-assess-industry').value.trim();
+                const consultant = document.getElementById('input-assess-consultant').value.trim();
+                if (!name) { alert('Please name the assessment'); return; }
+                STATE = {
+                    meta: {
+                        assessmentName: name,
+                        client: client || 'Unspecified',
+                        industry: industry || 'Unspecified',
+                        leadConsultant: consultant || 'Unspecified',
+                        startedAt: new Date().toISOString(),
+                        lastUpdatedAt: new Date().toISOString(),
+                        frameworkVersion: 'v3.0'
+                    },
+                    answers: {},
+                    notes: {},
+                    verdicts: {},
+                    rationales: {},
+                    currentGate: 'gate0'
+                };
+                saveState();
+                renderAssessor();
+                document.getElementById('btn-export').style.display = 'inline-flex';
+                document.getElementById('btn-reset').style.display = 'inline-flex';
+            }
+
+            async function resetAssessment() {
+                if (!(await confirm('Reset all assessment progress? This cannot be undone.'))) return;
+                STATE = {
+                    meta: { assessmentName: '', client: '', industry: '', leadConsultant: '', startedAt: null, lastUpdatedAt: null, frameworkVersion: 'v3.0' },
+                    answers: {}, notes: {}, verdicts: {}, rationales: {},
+                    currentGate: null
+                };
+                localStorage.removeItem(STORAGE_KEY);
+                document.getElementById('btn-export').style.display = 'none';
+                document.getElementById('btn-reset').style.display = 'none';
+                renderAssessorEmpty();
+            }
+
+            function exportAssessment() {
+                const data = JSON.stringify(STATE, null, 2);
+                const blob = new Blob([data], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `tcs-finetune-blueprint-${(STATE.meta.assessmentName || 'assessment').replace(/\s+/g, '-')}-${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+
+            function importAssessment(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const imported = JSON.parse(e.target.result);
+                        // Handle older format gracefully
+                        if (imported.meta) {
+                            STATE = imported;
+                        } else if (imported.assessmentName) {
+                            // Older flat format - migrate
+                            STATE = {
+                                meta: { assessmentName: imported.assessmentName, client: imported.client || '', industry: '', leadConsultant: '', startedAt: imported.startedAt || new Date().toISOString(), lastUpdatedAt: new Date().toISOString(), frameworkVersion: 'v3.0-imported' },
+                                answers: imported.answers || {},
+                                notes: {},
+                                verdicts: {},
+                                rationales: {},
+                                currentGate: 'gate0'
+                            };
+                        } else {
+                            throw new Error('Unrecognised format');
+                        }
+                        saveState();
+                        switchMode('assess');
+                        renderAssessor();
+                        document.getElementById('btn-export').style.display = 'inline-flex';
+                        document.getElementById('btn-reset').style.display = 'inline-flex';
+                    } catch (err) {
+                        alert('Invalid assessment file: ' + err.message);
+                    }
+                };
+                reader.readAsText(file);
+            }
+
+            function jumpToGate(gateId) {
+                if (!STATE.meta.startedAt) {
+                    startNewAssessment();
+                    return;
+                }
+                STATE.currentGate = gateId;
+                saveState();
+                renderAssessor();
+            }
+
+            /* ═══════════════════════════════════════════════════════════════════════════
+               RENDERING — EMPTY STATE
+               ═══════════════════════════════════════════════════════════════════════════ */
+            function renderAssessorEmpty() {
+                const v = document.getElementById('view-assess');
+                v.innerHTML = `
+        <div class="workspace-empty">
+          <h2>Begin a <em>decision framework</em> review.</h2>
+          <p>Walk seven gates with the customer. Capture business intent, technical reasoning, data reality, design choices, governance posture, success criteria, and platform recommendations. Output: a complete JSON document ready to feed into any LLM for full report generation.</p>
+          <div class="start-form">
+            <div class="field">
+              <label>Assessment Name</label>
+              <input id="input-assess-name" type="text" placeholder="e.g., AML Investigation SLM" autofocus>
+            </div>
+            <div class="field">
+              <label>Client / Engagement</label>
+              <input id="input-assess-client" type="text" placeholder="e.g., Global Bank · APAC">
+            </div>
+            <div class="field">
+              <label>Industry</label>
+              <input id="input-assess-industry" type="text" placeholder="e.g., Banking / Pharma / Manufacturing">
+            </div>
+            <div class="field">
+              <label>Lead Consultant</label>
+              <input id="input-assess-consultant" type="text" placeholder="Your name">
+            </div>
+            <button class="btn btn-primary" style="width: 100%; padding: 12px; justify-content: center; font-size: 11.5px;" onclick="__dfm.commitNewAssessment()">▶ Begin Assessment</button>
+          </div>
+        </div>
+      `;
+            }
+
+            /* ═══════════════════════════════════════════════════════════════════════════
+               RENDERING — MAIN ASSESSOR (rail + workspace + state panel)
+               ═══════════════════════════════════════════════════════════════════════════ */
+            function renderAssessor() {
+                const v = document.getElementById('view-assess');
+                let workspaceHtml = '';
+                let workspaceCls = '';
+
+                if (STATE.currentGate === '__flow__') {
+                    workspaceHtml = renderFlowView();
+                } else if (STATE.currentGate === '__report__') {
+                    workspaceHtml = renderReportView();
+                } else {
+                    const gate = FRAMEWORK.find(g => g.id === STATE.currentGate) || FRAMEWORK[0];
+                    workspaceCls = gate.color;
+                    workspaceHtml = renderGateWorkspace(gate);
+                }
+
+                v.innerHTML = `
+        <div class="assessor-shell">
+          <div class="gate-rail">${renderRail()}</div>
+          <div class="workspace ${workspaceCls}">${workspaceHtml}</div>
+          <div class="state-panel">${renderStatePanel()}</div>
+        </div>
+      `;
+                attachInputListeners();
+            }
+
+            function renderRail() {
+                let html = `
+        <div class="rail-meta">
+          <div class="rail-name">${escapeHtml(STATE.meta.assessmentName)}</div>
+          <div class="rail-client">${escapeHtml(STATE.meta.client)}</div>
+        </div>
+        <div class="rail-eyebrow">// Gates</div>
+      `;
+                FRAMEWORK.forEach(gate => {
+                    const verdict = computeGateVerdict(gate);
+                    const statusClass = verdict || '';
+                    const isActive = STATE.currentGate === gate.id ? 'active' : '';
+                    html += `
+          <div class="rail-gate ${statusClass} ${isActive}" onclick="__dfm.jumpToGate('${gate.id}')">
+            <div class="rail-gate-num">${gate.num}</div>
+            <div class="rail-gate-label">
+              ${gate.title}
+              <span class="rail-gate-sub">${gate.eyebrow}</span>
+            </div>
+          </div>
+        `;
+                });
+                html += `<div class="rail-divider"></div>`;
+                html += `<div class="rail-eyebrow">// Views</div>`;
+                html += `
+        <div class="rail-gate ${STATE.currentGate === '__flow__' ? 'active' : ''}" onclick="__dfm.jumpToGate('__flow__')">
+          <div class="rail-gate-num" style="background: rgba(6,182,212,0.18); border-color: var(--dfm-c-cyan); color: var(--dfm-c-cyan);">◇</div>
+          <div class="rail-gate-label">Decision Flow<span class="rail-gate-sub">Full-canvas chart</span></div>
+        </div>
+        <div class="rail-gate ${STATE.currentGate === '__report__' ? 'active' : ''}" onclick="__dfm.jumpToGate('__report__')">
+          <div class="rail-gate-num" style="background: rgba(139,92,246,0.18); border-color: var(--dfm-c-violet); color: var(--dfm-c-violet);">⊟</div>
+          <div class="rail-gate-label">Blueprint Report<span class="rail-gate-sub">Synthesis + LLM export</span></div>
+        </div>
+      `;
+                return html;
+            }
+
+            function renderGateWorkspace(gate) {
+                const ownerLabels = { business: 'Business', sme: 'SME', ds: 'Data Scientist', risk: 'Risk & Compliance' };
+                const ownerClasses = { business: 'biz', sme: 'sme', ds: 'ds', risk: 'risk' };
+                const ownersHtml = (gate.owners || []).map(o =>
+                    `<span class="owner-pill ${ownerClasses[o]}">${ownerLabels[o]}</span>`
+                ).join('');
+
+                let html = `
+        <div class="gate-head">
+          <div class="gate-head-meta">
+            <div class="gate-head-badge">${gate.num}</div>
+            <div class="gate-head-meta-text">
+              <div class="gate-head-eb">${gate.eyebrow}</div>
+              <h1>${gate.title}</h1>
+            </div>
+          </div>
+          <p class="gate-intro">${gate.intro}</p>
+          <div class="gate-owners">${ownersHtml}</div>
+          <div class="gate-outcome">
+            <strong>→ Deliverable:</strong> <span class="deliverable">${gate.deliverable}</span>
+          </div>
+        </div>
+      `;
+                gate.dimensions.forEach(dim => {
+                    html += renderDimension(dim, gate);
+                });
+                html += renderGateFooter(gate);
+                return html;
+            }
+
+            function renderDimension(dim, gate) {
+                const verdict = STATE.verdicts[dim.id] || null;
+                const verdictClass = verdict || 'unset';
+                const verdictLabel = verdict === 'pass' ? 'Ready' :
+                    verdict === 'fail' ? 'Needs Work' :
+                        verdict === 'pending' ? 'In Discussion' : 'Not Reviewed';
+
+                // Default expanded if not verdicted yet or if verdicted as fail/pending
+                const isExpanded = !verdict || verdict === 'fail' || verdict === 'pending';
+                const ownerLabel = dim.owner ? `<span class="owner-pill ${dim.owner === 'business' ? 'biz' : dim.owner === 'sme' ? 'sme' : dim.owner === 'risk' ? 'risk' : 'ds'}" style="margin-left: 8px;">${dim.owner === 'business' ? 'Business' : dim.owner === 'sme' ? 'SME' : dim.owner === 'risk' ? 'Risk' : 'DS'}</span>` : '';
+
+                let html = `
+        <div class="dim-card ${verdictClass} ${isExpanded ? 'expanded' : ''}" id="dim-${dim.id}">
+          <div class="dim-head" onclick="__dfm.toggleDimension('${dim.id}')">
+            <span class="dim-tag">${dim.tag}</span>
+            <div class="dim-title">${dim.title}${ownerLabel}</div>
+            <span class="dim-status ${verdictClass}">${verdictLabel}</span>
+            <span class="dim-chevron">▶</span>
+          </div>
+          <div class="dim-body">
+            <p class="dim-desc">${dim.desc}</p>
+      `;
+                dim.questions.forEach((q, idx) => {
+                    html += renderQuestion(q, dim, idx + 1);
+                });
+
+                // Notes textarea (every dimension gets one)
+                html += renderDimensionNotes(dim);
+
+                // Verdict override (every dimension gets one)
+                html += renderVerdictOverride(dim);
+
+                html += `</div></div>`;
+                return html;
+            }
+
+            function renderQuestion(q, dim, num) {
+                const answered = STATE.answers[q.id] !== undefined &&
+                    STATE.answers[q.id] !== '' &&
+                    !(Array.isArray(STATE.answers[q.id]) && STATE.answers[q.id].length === 0);
+                let inputHtml = '';
+                switch (q.type) {
+                    case 'yes-no-partial':
+                        inputHtml = renderYesNoPartial(q);
+                        break;
+                    case 'single-select':
+                        inputHtml = renderSingleSelect(q);
+                        break;
+                    case 'multi-select':
+                        inputHtml = renderMultiSelect(q);
+                        break;
+                    case 'number':
+                        inputHtml = renderNumber(q);
+                        break;
+                    case 'text':
+                        inputHtml = renderText(q);
+                        break;
+                    case 'scale-1-5':
+                        inputHtml = renderScale(q);
+                        break;
+                    case 'select-and-text':
+                        inputHtml = renderSelectAndText(q);
+                        break;
+                }
+                return `
+        <div class="q ${answered ? 'answered' : ''}" id="q-${q.id}">
+          <div class="q-head">
+            <span class="q-num">Q${num}</span>
+            <div class="q-text">${q.text}</div>
+          </div>
+          ${q.help ? `<div class="q-help">${q.help}</div>` : ''}
+          <div class="q-input">${inputHtml}</div>
+        </div>
+      `;
+            }
+
+            function renderYesNoPartial(q) {
+                const v = STATE.answers[q.id];
+                const opts = q.options || [
+                    { value: 'yes', label: 'Yes' },
+                    { value: 'partial', label: 'Partial' },
+                    { value: 'no', label: 'No' }
+                ];
+                return `<div class="toggle-group">${opts.map(o => {
+                    const sel = v === o.value;
+                    return `<button class="toggle-btn ${sel ? 'selected' : ''}" data-q="${q.id}" data-v="${o.value}">${o.label}</button>`;
+                }).join('')}</div>`;
+            }
+
+            function renderSingleSelect(q) {
+                const v = STATE.answers[q.id];
+                return `<div class="select-group">${q.options.map(o => {
+                    const sel = v === o.value;
+                    return `<button class="select-opt ${sel ? 'selected' : ''}" data-q="${q.id}" data-v="${o.value}">${escapeHtml(o.label)}</button>`;
+                }).join('')}</div>`;
+            }
+
+            function renderMultiSelect(q) {
+                const v = STATE.answers[q.id] || [];
+                return `<div class="multi-group">${q.options.map(o => {
+                    const sel = v.includes(o.value);
+                    return `<div class="multi-opt ${sel ? 'selected' : ''}" data-q="${q.id}" data-v="${o.value}">
+          <span class="multi-check">${sel ? '✓' : ''}</span>
+          <span>${escapeHtml(o.label)}</span>
+        </div>`;
+                }).join('')}</div>`;
+            }
+
+            function renderNumber(q) {
+                const v = STATE.answers[q.id] || '';
+                return `<div class="number-input">
+        <input type="number" data-q="${q.id}" value="${v}" placeholder="${q.placeholder || '0'}">
+        ${q.unit ? `<span class="unit">${q.unit}</span>` : ''}
+      </div>`;
+            }
+
+            function renderText(q) {
+                const v = STATE.answers[q.id] || '';
+                return `<textarea class="text-input ${q.long ? 'long' : ''}" data-q="${q.id}" placeholder="${q.placeholder || ''}">${escapeHtml(v)}</textarea>`;
+            }
+
+            function renderScale(q) {
+                const v = STATE.answers[q.id];
+                let html = `<div class="scale-group">`;
+                for (let i = 1; i <= 5; i++) {
+                    html += `<button class="scale-btn ${v === i ? 'selected' : ''}" data-q="${q.id}" data-v="${i}">${i}</button>`;
+                }
+                html += `</div>`;
+                html += `<div class="scale-labels"><span>${q.lowLabel || 'Low'}</span><span>${q.highLabel || 'High'}</span></div>`;
+                return html;
+            }
+
+            function renderSelectAndText(q) {
+                // Hybrid: presets to click-fill, plus a free-text field that can be edited.
+                // STATE.answers[q.id] stores the final text (which may have been populated from a preset).
+                const v = STATE.answers[q.id] || '';
+                const selectedPreset = STATE.answers[q.id + '_preset'] || '';
+                let html = `<div class="sat-presets-label">Pick a starting point (optional):</div>`;
+                html += `<div class="sat-presets">`;
+                q.options.forEach(o => {
+                    const isSelected = selectedPreset === o.value;
+                    html += `<button class="sat-preset-btn ${isSelected ? 'selected' : ''}" data-sat-preset="${q.id}" data-v="${o.value}" data-text="${escapeHtml(o.label)}">${escapeHtml(o.shortLabel || o.value)}</button>`;
+                });
+                html += `</div>`;
+                html += `<div class="sat-textarea-label">Your recommended sequence (edit freely):</div>`;
+                html += `<textarea class="text-input long sat-textarea" data-q="${q.id}" placeholder="${q.placeholder || 'Write the recommended training stack sequence in your own words...'}">${escapeHtml(v)}</textarea>`;
+                return html;
+            }
+
+            function renderDimensionNotes(dim) {
+                const notes = STATE.notes[dim.id] || '';
+                return `
+        <div class="dim-notes">
+          <div class="dim-notes-label">▤ Detailed Response / Notes</div>
+          <div class="dim-notes-help">Capture context, examples, caveats, or anything the structured questions don't cover. This is preserved in JSON export and the LLM-ready summary.</div>
+          <textarea data-note="${dim.id}" placeholder="Write detailed notes, context, examples, exceptions, concerns, dependencies, or any rich context for this dimension...">${escapeHtml(notes)}</textarea>
+        </div>
+      `;
+            }
+
+            function renderVerdictOverride(dim) {
+                const verdict = STATE.verdicts[dim.id] || null;
+                const rationale = STATE.rationales[dim.id] || '';
+                return `
+        <div class="verdict-override">
+          <div class="vo-label">◆ Dimension Status — Consulting Judgement</div>
+          <div class="vo-help">Based on the answers above and your domain assessment, mark this dimension as Ready (well-positioned to proceed), In Discussion (needs further conversation or data), or Needs Work (significant gap to close). This is not a pass/fail — it is a guide for where to focus next.</div>
+          <div class="vo-buttons">
+            <button class="vo-btn ${verdict === 'pass' ? 'selected pass' : ''}" data-verdict="${dim.id}" data-v="pass">✓ Ready</button>
+            <button class="vo-btn ${verdict === 'pending' ? 'selected pending' : ''}" data-verdict="${dim.id}" data-v="pending">◐ In Discussion</button>
+            <button class="vo-btn ${verdict === 'fail' ? 'selected fail' : ''}" data-verdict="${dim.id}" data-v="fail">▲ Needs Work</button>
+          </div>
+          <div class="vo-rationale">
+            <div class="vo-rationale-label">Observations &amp; Recommended Next Steps</div>
+            <textarea data-rationale="${dim.id}" placeholder="What is the consulting view on this dimension? What needs to happen next? What is the recommended approach or area to explore further?">${escapeHtml(rationale)}</textarea>
+          </div>
+        </div>
+      `;
+            }
+
+            function renderGateFooter(gate) {
+                const verdict = computeGateVerdict(gate);
+                const verdictText = verdict === 'pass' ? '✓ Gate review complete — all dimensions ready' :
+                    verdict === 'fail' ? '▲ Gate has dimensions needing work — focus areas identified' :
+                        verdict === 'pending' ? '◐ Gate has open discussion points — track to resolution' :
+                            'Gate review in progress';
+                const idx = FRAMEWORK.findIndex(g => g.id === gate.id);
+                const next = FRAMEWORK[idx + 1];
+                return `
+        <div class="gate-footer">
+          <div class="gate-footer-status">
+            <div class="gf-label">Gate ${gate.num} Status</div>
+            <div class="gf-text">${verdictText}</div>
+          </div>
+          ${next ? `<button class="btn btn-primary" onclick="__dfm.jumpToGate('${next.id}')">Continue to Gate ${next.num} →</button>` : `<button class="btn btn-primary" onclick="__dfm.jumpToGate('__report__')">View Decision Report →</button>`}
+        </div>
+      `;
+            }
+
+            /* ═══════════════════════════════════════════════════════════════════════════
+               STATE PANEL (right side) — compact verdict ticker + progress
+               ═══════════════════════════════════════════════════════════════════════════ */
+            function renderStatePanel() {
+                const totalDims = FRAMEWORK.reduce((s, g) => s + g.dimensions.length, 0);
+                const verdictedDims = FRAMEWORK.reduce((s, g) =>
+                    s + g.dimensions.filter(d => STATE.verdicts[d.id] !== undefined).length, 0);
+                const pct = Math.round((verdictedDims / totalDims) * 100);
+
+                let html = `
+        <div class="sp-head">
+          <div class="sp-eb">// Assessment</div>
+          <div class="sp-title">${escapeHtml(STATE.meta.assessmentName)}</div>
+          <div class="sp-sub">${escapeHtml(STATE.meta.client)} · ${escapeHtml(STATE.meta.industry)}</div>
+        </div>
+
+        <div class="progress-block">
+          <div class="progress-row">
+            <span>Verdicts Cast</span>
+            <span class="pct">${pct}%</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" style="width: ${pct}%;"></div>
+          </div>
+          <div style="font-size: 11px; color: var(--dfm-text-muted); margin-top: 6px;">${verdictedDims} of ${totalDims} dimensions decided</div>
+        </div>
+
+        <div class="sp-eb" style="margin-bottom: 10px;">// Gate Verdicts</div>
+      `;
+
+                FRAMEWORK.forEach(gate => {
+                    const verdict = computeGateVerdict(gate);
+                    const cls = verdict || 'unset';
+                    const tag = verdict === 'pass' ? 'READY' :
+                        verdict === 'fail' ? 'GAPS' :
+                            verdict === 'pending' ? 'OPEN' :
+                                verdict === 'in-progress' ? 'ACTIVE' : 'PENDING';
+                    const statusText = verdict === 'pass' ? 'All dimensions ready' :
+                        verdict === 'fail' ? 'Has dimensions needing work' :
+                            verdict === 'pending' ? 'Has dimensions in discussion' :
+                                verdict === 'in-progress' ? 'Review in progress' :
+                                    'Not yet reviewed';
+                    html += `
+          <div class="vs-item ${cls}" onclick="__dfm.jumpToGate('${gate.id}')">
+            <div class="vs-head">
+              <div class="vs-name">G${gate.num} · ${gate.title}</div>
+              <span class="vs-tag">${tag}</span>
+            </div>
+            <div class="vs-text">${statusText}</div>
+          </div>
+        `;
+                });
+
+                html += `
+        <div class="sp-divider"></div>
+        <div class="sp-eb" style="margin-bottom: 10px;">// Quick Views</div>
+        <div class="sp-action">
+          <button class="btn" onclick="__dfm.jumpToGate('__flow__')">◇ Decision Flow</button>
+          <button class="btn" onclick="__dfm.jumpToGate('__report__')">⊟ Blueprint Report</button>
+        </div>
+      `;
+                return html;
+            }
+
+            /* ═══════════════════════════════════════════════════════════════════════════
+               DECISION ENGINE
+               ═══════════════════════════════════════════════════════════════════════════ */
+            function computeGateVerdict(gate) {
+                const verdicts = gate.dimensions.map(d => STATE.verdicts[d.id]);
+                const setVerdicts = verdicts.filter(v => v !== undefined);
+                if (setVerdicts.length === 0) return null;
+                if (setVerdicts.length < gate.dimensions.length) return 'in-progress';
+                if (setVerdicts.includes('fail')) return 'fail';
+                if (setVerdicts.includes('pending')) return 'pending';
+                return 'pass';
+            }
+
+            /* ═══════════════════════════════════════════════════════════════════════════
+               INPUT EVENT HANDLERS
+               ═══════════════════════════════════════════════════════════════════════════ */
+            function attachInputListeners() {
+                // Question inputs - toggle / single / multi
+                document.querySelectorAll('.toggle-btn, .select-opt, .multi-opt').forEach(el => {
+                    el.addEventListener('click', (e) => {
+                        const qid = el.dataset.q;
+                        const v = el.dataset.v;
+                        if (!qid) return;
+                        const isMulti = el.classList.contains('multi-opt');
+                        if (isMulti) {
+                            const current = STATE.answers[qid] || [];
+                            if (current.includes(v)) {
+                                STATE.answers[qid] = current.filter(x => x !== v);
+                            } else {
+                                STATE.answers[qid] = [...current, v];
+                            }
+                        } else {
+                            STATE.answers[qid] = v;
+                        }
+                        saveState();
+                        renderAssessor();
+                    });
+                });
+
+                // Select-and-text preset buttons: clicking a preset populates the textarea
+                document.querySelectorAll('.sat-preset-btn').forEach(el => {
+                    el.addEventListener('click', () => {
+                        const qid = el.dataset.satPreset;
+                        const presetVal = el.dataset.v;
+                        const presetText = el.dataset.text;
+                        STATE.answers[qid + '_preset'] = presetVal;
+                        // Populate textarea with the preset's full text if textarea is empty or matches a different preset
+                        const existing = STATE.answers[qid] || '';
+                        const prevPresetText = el.parentElement.querySelector('.sat-preset-btn.selected')?.dataset.text;
+                        if (!existing || existing === prevPresetText) {
+                            STATE.answers[qid] = presetText;
+                        }
+                        saveState();
+                        renderAssessor();
+                    });
+                });
+
+                // Scale buttons
+                document.querySelectorAll('.scale-btn').forEach(el => {
+                    el.addEventListener('click', () => {
+                        STATE.answers[el.dataset.q] = parseInt(el.dataset.v);
+                        saveState();
+                        renderAssessor();
+                    });
+                });
+
+                // Number / text inputs - save on blur
+                document.querySelectorAll('input[type="number"], textarea.text-input').forEach(el => {
+                    el.addEventListener('blur', () => {
+                        const qid = el.dataset.q;
+                        if (!qid) return;
+                        const v = el.type === 'number' ? (parseFloat(el.value) || 0) : el.value;
+                        STATE.answers[qid] = v;
+                        saveState();
+                    });
+                });
+
+                // Verdict override buttons
+                document.querySelectorAll('.vo-btn').forEach(el => {
+                    el.addEventListener('click', () => {
+                        const dimId = el.dataset.verdict;
+                        const v = el.dataset.v;
+                        if (STATE.verdicts[dimId] === v) {
+                            delete STATE.verdicts[dimId];
+                        } else {
+                            STATE.verdicts[dimId] = v;
+                        }
+                        saveState();
+                        renderAssessor();
+                    });
+                });
+
+                // Notes textareas
+                document.querySelectorAll('textarea[data-note]').forEach(el => {
+                    el.addEventListener('blur', () => {
+                        const dimId = el.dataset.note;
+                        STATE.notes[dimId] = el.value;
+                        saveState();
+                    });
+                });
+
+                // Rationale textareas
+                document.querySelectorAll('textarea[data-rationale]').forEach(el => {
+                    el.addEventListener('blur', () => {
+                        const dimId = el.dataset.rationale;
+                        STATE.rationales[dimId] = el.value;
+                        saveState();
+                    });
+                });
+            }
+
+            function toggleDimension(dimId) {
+                const card = document.getElementById('dim-' + dimId);
+                if (card) card.classList.toggle('expanded');
+            }
+
+            /* ═══════════════════════════════════════════════════════════════════════════
+               FLOW VIEW — Full-canvas decision flow visualization
+               ═══════════════════════════════════════════════════════════════════════════ */
+            function renderFlowView() {
+                return `
+        <div class="flow-head">
+          <div class="eb">// Decision Flow · Live visualization</div>
+          <h1>Decision <em>Flow</em></h1>
+          <p>The complete decision path through Entry Criteria, all six gates, and the Fine-Tuning Blueprint outcome. Colours reflect your verdicts. The chart updates as you mark dimensions. Download the SVG for inclusion in client decks and program documentation.</p>
+        </div>
+
+        <div class="flow-controls">
+          <div class="flow-legend">
+            <div class="legend-item"><span class="legend-dot" style="background:#34d399;"></span> Ready</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#f59e0b;"></span> In Discussion</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#ff5c5c;"></span> Needs Work</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#76b900;"></span> In Progress</div>
+            <div class="legend-item"><span class="legend-dot" style="background:#48594c;"></span> Not Reviewed</div>
+          </div>
+          <button class="btn" onclick="__dfm.downloadFlowSvg()">⬇ Download SVG</button>
+        </div>
+
+        <div class="flow-canvas" id="flow-canvas">
+          ${renderFullFlowChart()}
+        </div>
+
+        <div style="margin-top: 28px; padding: 22px 26px; background: var(--dfm-surface); border: 1px solid var(--dfm-border); border-radius: 12px;">
+          <div style="font-family: 'JetBrains Mono', monospace; font-size: 10.5px; color: var(--dfm-c-cyan); letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 12px;">// How to read this</div>
+          <p style="font-size: 13.5px; color: var(--dfm-text-dim); line-height: 1.7;">START at use case definition. Through <strong style="color:var(--dfm-text-bright);">Entry Criteria</strong> (mandatory pass). Through each <strong style="color:var(--dfm-text-bright);">Gate</strong> in sequence — Business Framing → Model Gap → Data Readiness → Design → Risk → Evaluation. Each gate expands to show its dimensions. The flow ends at the <strong style="color:var(--dfm-text-bright);">Fine-Tuning Blueprint</strong> outcome — Go, No-Go, or Conditional.</p>
+        </div>
+      `;
+            }
+
+            function renderFullFlowChart() {
+                const nodes = [];
+                const edges = [];
+
+                const GATE_W = 220;
+                const GATE_H = 52;
+                const DIM_W = 200;
+                const DIM_H = 32;
+                const COL_GAP = 250;
+
+                const startX = 30;
+                const gateColX = 280;
+                const dimColX = gateColX + COL_GAP;
+                const endX = dimColX + DIM_W + 90;
+
+                let totalHeight = 0;
+                const gateLayouts = FRAMEWORK.map(gate => {
+                    const dimCount = gate.dimensions.length;
+                    const gateHeight = Math.max(GATE_H + 24, dimCount * (DIM_H + 8) + 16);
+                    const startY = totalHeight + 20;
+                    totalHeight += gateHeight + 18;
+                    return { gate, startY, height: gateHeight };
+                });
+
+                const svgHeight = totalHeight + 100;
+                const centerY = svgHeight / 2;
+
+                nodes.push({
+                    type: 'start',
+                    x: startX, y: centerY - 30, w: 200, h: 60,
+                    label: 'START',
+                    sublabel: 'Use Case Defined',
+                    color: '#f59e0b'
+                });
+
+                gateLayouts.forEach((gl, gIdx) => {
+                    const gate = gl.gate;
+                    const gateVerdict = computeGateVerdict(gate);
+                    const gateColor = colorFromVerdict(gateVerdict, gateColorByIdx(gIdx));
+                    const gateY = gl.startY + (gl.height - GATE_H) / 2;
+
+                    nodes.push({
+                        type: 'gate',
+                        gateId: gate.id,
+                        x: gateColX, y: gateY, w: GATE_W, h: GATE_H,
+                        label: `GATE ${gate.num}`,
+                        sublabel: gate.title,
+                        color: gateColor,
+                        verdict: gateVerdict
+                    });
+
+                    if (gIdx === 0) {
+                        edges.push({
+                            type: 'main',
+                            x1: startX + 200, y1: centerY,
+                            x2: gateColX, y2: gateY + GATE_H / 2,
+                            color: '#8fae97'
+                        });
+                    } else {
+                        const prevGate = nodes.filter(n => n.type === 'gate')[gIdx - 1];
+                        edges.push({
+                            type: 'gate-link',
+                            x1: gateColX + GATE_W / 2, y1: prevGate.y + prevGate.h,
+                            x2: gateColX + GATE_W / 2, y2: gateY,
+                            color: gateColor,
+                            dashed: true
+                        });
+                    }
+
+                    const dimsTotalHeight = gate.dimensions.length * (DIM_H + 8) - 8;
+                    const dimsStartY = gateY + GATE_H / 2 - dimsTotalHeight / 2;
+
+                    gate.dimensions.forEach((dim, dIdx) => {
+                        const dimVerdict = STATE.verdicts[dim.id] || null;
+                        const dimColor = colorFromVerdict(dimVerdict, gateColorByIdx(gIdx));
+                        const dimY = dimsStartY + dIdx * (DIM_H + 8);
+                        nodes.push({
+                            type: 'dim',
+                            dimId: dim.id,
+                            x: dimColX, y: dimY, w: DIM_W, h: DIM_H,
+                            label: dim.tag,
+                            sublabel: dim.title,
+                            color: dimColor,
+                            verdict: dimVerdict
+                        });
+
+                        edges.push({
+                            type: 'gate-dim',
+                            x1: gateColX + GATE_W, y1: gateY + GATE_H / 2,
+                            x2: dimColX, y2: dimY + DIM_H / 2,
+                            color: dimColor
+                        });
+                    });
+                });
+
+                const overallVerdict = computeOverallVerdict();
+                const endColor = overallVerdict === 'pass' ? '#34d399' :
+                    overallVerdict === 'fail' ? '#ff5c5c' :
+                        overallVerdict === 'pending' ? '#f59e0b' : '#48594c';
+                const endLabel = overallVerdict === 'pass' ? 'RECOMMENDED · TUNING PATH' :
+                    overallVerdict === 'fail' ? 'RECONSIDER · GAPS IDENTIFIED' :
+                        overallVerdict === 'pending' ? 'CONDITIONAL · OPEN ITEMS' : 'IN PROGRESS';
+
+                const endY = centerY - 35;
+                nodes.push({
+                    type: 'end',
+                    x: endX, y: endY, w: 220, h: 70,
+                    label: 'FINE-TUNING',
+                    sublabel: endLabel,
+                    color: endColor
+                });
+
+                const lastGate = nodes.filter(n => n.type === 'gate').pop();
+                edges.push({
+                    type: 'main',
+                    x1: gateColX + GATE_W, y1: lastGate.y + lastGate.h / 2,
+                    x2: endX, y2: endY + 35,
+                    color: endColor,
+                    midpath: true
+                });
+
+                const svgW = endX + 240;
+                let svg = `<svg viewBox="0 0 ${svgW} ${svgHeight}" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">`;
+
+                svg += `<defs>
+        <linearGradient id="startGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" style="stop-color:#f59e0b;stop-opacity:0.3"/>
+          <stop offset="100%" style="stop-color:#f59e0b;stop-opacity:0.1"/>
+        </linearGradient>
+        <linearGradient id="endGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" style="stop-color:${endColor};stop-opacity:0.2"/>
+          <stop offset="100%" style="stop-color:${endColor};stop-opacity:0.4"/>
+        </linearGradient>
+      </defs>`;
+
+                edges.forEach(e => {
+                    if (e.type === 'gate-link') {
+                        svg += `<path d="M ${e.x1} ${e.y1} L ${e.x2} ${e.y2}" stroke="${e.color}" stroke-width="1.8" fill="none" stroke-dasharray="${e.dashed ? '5 5' : 'none'}" opacity="0.5"/>`;
+                    } else if (e.type === 'main' && e.midpath) {
+                        const midX = (e.x1 + e.x2) / 2;
+                        svg += `<path d="M ${e.x1} ${e.y1} C ${midX} ${e.y1}, ${midX} ${e.y2}, ${e.x2} ${e.y2}" stroke="${e.color}" stroke-width="2.5" fill="none" opacity="0.7"/>`;
+                    } else {
+                        svg += `<line x1="${e.x1}" y1="${e.y1}" x2="${e.x2}" y2="${e.y2}" stroke="${e.color}" stroke-width="${e.type === 'main' ? 2.5 : 1.4}" opacity="0.55"/>`;
+                    }
+                });
+
+                nodes.forEach(n => {
+                    const rx = n.type === 'start' || n.type === 'end' ? n.h / 2 : 9;
+                    const fillOpacity = n.verdict ? '0.20' : '0.10';
+
+                    if (n.type === 'start') {
+                        svg += `<rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="${rx}" fill="url(#startGrad)" stroke="${n.color}" stroke-width="2.2"/>`;
+                    } else if (n.type === 'end') {
+                        svg += `<rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="${rx}" fill="url(#endGrad)" stroke="${n.color}" stroke-width="2.2"/>`;
+                    } else {
+                        svg += `<rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="${rx}" fill="${n.color}" fill-opacity="${fillOpacity}" stroke="${n.color}" stroke-width="1.6"/>`;
+                    }
+
+                    const labelY = n.sublabel ? n.y + 22 : n.y + n.h / 2 + 4;
+                    const sublabelY = n.y + n.h / 2 + 13;
+
+                    svg += `<text x="${n.x + 16}" y="${labelY}" font-family="JetBrains Mono, monospace" font-size="11.5" font-weight="700" fill="${n.color}" letter-spacing="0.8">${escapeXml(n.label)}</text>`;
+                    if (n.sublabel) {
+                        svg += `<text x="${n.x + 16}" y="${sublabelY}" font-family="Inter, sans-serif" font-size="11" font-weight="500" fill="#eefdf0">${escapeXml(truncateText(n.sublabel, 28))}</text>`;
+                    }
+
+                    if (n.verdict) {
+                        const symbol = n.verdict === 'pass' ? '✓' : n.verdict === 'pending' ? '◐' : n.verdict === 'fail' ? '▲' : '·';
+                        svg += `<text x="${n.x + n.w - 22}" y="${n.y + n.h / 2 + 6}" font-size="16" fill="${n.color}" font-weight="700" text-anchor="middle">${symbol}</text>`;
+                    }
+                });
+
+                svg += `</svg>`;
+                return svg;
+            }
+
+            function gateColorByIdx(idx) {
+                const colors = ['#f0a83c', '#76b900', '#9d7bff', '#06b6d4', '#f59e0b', '#ec4899', '#34d399'];
+                return colors[idx % colors.length];
+            }
+
+            function colorFromVerdict(verdict, defaultColor) {
+                if (verdict === 'pass') return '#34d399';
+                if (verdict === 'pending') return '#f59e0b';
+                if (verdict === 'fail') return '#ff5c5c';
+                if (verdict === 'in-progress') return defaultColor;
+                return '#48594c';
+            }
+
+            function truncateText(s, n) {
+                if (!s) return '';
+                return s.length > n ? s.substring(0, n - 1) + '…' : s;
+            }
+
+            function downloadFlowSvg() {
+                const svgEl = document.querySelector('#flow-canvas svg');
+                if (!svgEl) return;
+                const svgData = new XMLSerializer().serializeToString(svgEl);
+                const blob = new Blob([svgData], { type: 'image/svg+xml' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `tcs-decision-flow-${(STATE.meta.assessmentName || 'assessment').replace(/\s+/g, '-')}.svg`;
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+
+            function computeOverallVerdict() {
+                const gateVerdicts = FRAMEWORK.map(g => computeGateVerdict(g));
+                if (gateVerdicts.every(v => v === null)) return null;
+                if (gateVerdicts.some(v => v === 'fail')) return 'fail';
+                if (gateVerdicts.includes(null) || gateVerdicts.includes('in-progress')) return 'in-progress';
+                if (gateVerdicts.some(v => v === 'pending')) return 'pending';
+                return 'pass';
+            }
+
+            /* ═══════════════════════════════════════════════════════════════════════════
+               REPORT VIEW — Blueprint synthesis + LLM-ready export
+               ═══════════════════════════════════════════════════════════════════════════ */
+            function renderReportView() {
+                const overall = computeOverallVerdict();
+                let recommendation = '';
+                if (overall === null) {
+                    recommendation = 'Decision framework review not yet started. Begin with the Entry Criteria gate to qualify the engagement.';
+                } else if (overall === 'fail') {
+                    recommendation = 'The review surfaces meaningful gaps across one or more dimensions. The recommended path is to close these gaps before committing to fine-tuning execution. In several cases, the framework may surface that a non-training architecture — Retrieval-Augmented Generation, prompt engineering, agentic orchestration, or an existing domain model — fits the use case better than custom training. Treat this as a consulting redirect, not a rejection.';
+                } else if (overall === 'in-progress') {
+                    recommendation = 'Decision framework review in progress. Complete all dimensions to produce a comprehensive recommendation report.';
+                } else if (overall === 'pending') {
+                    recommendation = 'Decision framework review is largely complete with several dimensions still under discussion. The engagement can advance to fine-tuning planning while the open items are tracked to closure. Treat the open items as workstream entries with named owners and resolution dates.';
+                } else {
+                    recommendation = 'Decision framework review complete. All dimensions are well-positioned. The engagement is ready to advance to fine-tuning execution on the chosen platform. The blueprint below specifies the model strategy, data contract, execution plan, governance posture, and success criteria.';
+                }
+
+                const totalDims = FRAMEWORK.reduce((s, g) => s + g.dimensions.length, 0);
+                const verdictedDims = FRAMEWORK.reduce((s, g) =>
+                    s + g.dimensions.filter(d => STATE.verdicts[d.id] !== undefined).length, 0);
+
+                let html = `
+        <div class="flow-head">
+          <div class="eb" style="color: var(--dfm-c-violet);">// Decision Report · Synthesis</div>
+          <h1>Model Tuning <em style="color: var(--dfm-c-violet);">Decision Report</em></h1>
+          <p>The full review synthesis — executive summary, gate-by-gate status, consulting observations, platform recommendations, and a JSON-ready prompt that packages the entire assessment for any LLM to generate the full report. Print to PDF for client delivery.</p>
+        </div>
+
+        <div class="report-controls">
+          <button class="btn btn-primary" onclick="window.print()">🖨 Print / Save as PDF</button>
+          <button class="btn" onclick="__dfm.exportAssessment()">⬇ Export JSON</button>
+          <button class="btn" onclick="__dfm.copyLlmPrompt()">⎘ Copy LLM Prompt</button>
+          <button class="btn" onclick="__dfm.jumpToGate('__flow__')">◇ View Flow Chart</button>
+        </div>
+
+        <div class="report-doc">
+
+          <div class="report-section report-summary">
+            <div class="report-eb">// Executive Summary</div>
+            <h2>${escapeHtml(STATE.meta.assessmentName)}</h2>
+            <div class="report-meta">
+              <div class="rm-item"><span class="rm-label">Client</span><span class="rm-value">${escapeHtml(STATE.meta.client)}</span></div>
+              <div class="rm-item"><span class="rm-label">Industry</span><span class="rm-value">${escapeHtml(STATE.meta.industry)}</span></div>
+              <div class="rm-item"><span class="rm-label">Lead</span><span class="rm-value">${escapeHtml(STATE.meta.leadConsultant)}</span></div>
+              <div class="rm-item"><span class="rm-label">Verdict</span><span class="rm-value ${overall || 'unset'}">${(overall || 'unset').toUpperCase()}</span></div>
+            </div>
+            <div class="report-rec ${overall || 'unset'}">
+              <div class="rr-tag">Overall Recommendation</div>
+              <p>${recommendation}</p>
+            </div>
+            <div style="margin-top: 16px; font-size: 12px; color: var(--dfm-text-muted); font-family: 'JetBrains Mono', monospace; letter-spacing: 0.5px;">
+              ${verdictedDims} of ${totalDims} dimensions decided · Framework ${escapeHtml(STATE.meta.frameworkVersion || 'v3.0')} · Started ${new Date(STATE.meta.startedAt).toLocaleDateString()}
+            </div>
+          </div>
+
+          <div class="report-section">
+            <div class="report-eb">// Gate-by-Gate Verdicts</div>
+            ${FRAMEWORK.map(gate => renderReportGate(gate)).join('')}
+          </div>
+
+          <div class="report-section">
+            <div class="report-eb">// Decision Report Synthesis</div>
+            ${renderBlueprintSynthesis()}
+          </div>
+
+          <div class="report-section">
+            <div class="report-eb">// Next Steps</div>
+            ${renderNextSteps(overall)}
+          </div>
+
+          <div class="report-section">
+            <div class="report-eb">// LLM-Ready Export</div>
+            <p style="font-size: 13px; color: var(--dfm-text-dim); line-height: 1.65; margin-bottom: 14px;">The block below packages the entire assessment as a <strong style="color: var(--dfm-text-bright);">complete JSON document plus instructions</strong>. Paste it AS-IS into any large language model — ChatGPT, Claude, Gemini, in-house deployments — to generate a comprehensive 13-section Fine-Tuning Decision Report. The JSON contains every question, every option, every answer, every consulting observation. The LLM does not need access to this framework — everything it needs is in the prompt. Click <strong style="color: var(--dfm-text-bright);">Copy LLM Prompt</strong> above to copy.</p>
+            <div class="llm-export">
+              <div class="llm-export-head">
+                <span class="llm-export-label">// Prompt — copy and paste into your LLM of choice</span>
+              </div>
+              <pre id="llm-prompt-text">${escapeHtml(generateLlmPrompt())}</pre>
+            </div>
+          </div>
+
+          <div class="report-section" style="border-top: 1px solid var(--dfm-border); margin-top: 36px; padding-top: 24px;">
+            <div style="display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--dfm-text-muted); letter-spacing: 1px;">
+              <span>TCS DOMAIN AI · DECISION FRAMEWORK FOR MODEL TUNING</span>
+              <span>v3.0 · ${new Date().toLocaleDateString()}</span>
+            </div>
+          </div>
+
+        </div>
+      `;
+                return html;
+            }
+
+            function renderReportGate(gate) {
+                const verdict = computeGateVerdict(gate);
+                const verdictClass = verdict || 'unset';
+                const verdictText = verdict === 'pass' ? 'READY' :
+                    verdict === 'fail' ? 'NEEDS WORK' :
+                        verdict === 'pending' ? 'IN DISCUSSION' :
+                            verdict === 'in-progress' ? 'IN PROGRESS' : 'NOT REVIEWED';
+
+                let html = `
+        <div class="rg-card ${verdictClass}">
+          <div class="rg-head">
+            <div class="rg-num">${gate.num}</div>
+            <div class="rg-meta">
+              <div class="rg-eb">${gate.eyebrow}</div>
+              <h3>${gate.title}</h3>
+            </div>
+            <div class="rg-verdict ${verdictClass}">${verdictText}</div>
+          </div>
+          <div class="rg-deliverable">Deliverable: <strong>${gate.deliverable}</strong></div>
+          <div class="rg-dims">
+      `;
+                gate.dimensions.forEach(dim => {
+                    const dimVerdict = STATE.verdicts[dim.id] || null;
+                    const dimClass = dimVerdict || 'unset';
+                    const dimSym = dimVerdict === 'pass' ? '✓' : dimVerdict === 'pending' ? '◐' : dimVerdict === 'fail' ? '▲' : '·';
+                    const dimLabel = dimVerdict === 'pass' ? 'READY' :
+                        dimVerdict === 'pending' ? 'IN DISCUSSION' :
+                            dimVerdict === 'fail' ? 'NEEDS WORK' : 'NOT REVIEWED';
+                    const rationale = STATE.rationales[dim.id];
+                    html += `
+          <div class="rg-dim ${dimClass}" title="${rationale ? escapeHtml(rationale) : ''}">
+            <span class="rg-dim-sym">${dimSym}</span>
+            <span class="rg-dim-tag">${dim.tag}</span>
+            <span class="rg-dim-name">${dim.title}</span>
+            <span class="rg-dim-verdict">${dimLabel}</span>
+          </div>
+        `;
+                });
+                html += `</div></div>`;
+                return html;
+            }
+
+            function renderBlueprintSynthesis() {
+                const sections = [
+                    {
+                        title: '1 · Decision Summary',
+                        items: [
+                            { key: 'Framework Recommendation', value: formatVerdict(computeOverallVerdict()) },
+                            { key: 'Primary Justification', value: STATE.rationales['d2_1'] || STATE.notes['d2_1'] || '' }
+                        ]
+                    },
+                    {
+                        title: '2 · Use Case Definition',
+                        items: [
+                            { key: 'Business Process', value: STATE.answers['q1_1_1'] || '' },
+                            { key: 'Model Role', value: formatAnswer('q1_1_2') },
+                            { key: 'End User', value: formatAnswer('q1_1_3') },
+                            { key: 'Decision Criticality', value: formatAnswer('q1_2_2') },
+                            { key: 'Output Behaviour', value: formatAnswer('q1_3_1') },
+                            { key: 'Explainability Required', value: formatAnswer('q1_3_2') },
+                            { key: 'Auditability Required', value: formatAnswer('q1_3_3') }
+                        ]
+                    },
+                    {
+                        title: '3 · Domain Niche-ness & Hallucination Risk',
+                        items: [
+                            { key: 'Vocabulary Specialisation', value: formatAnswer('q2_5_1') },
+                            { key: 'Tacit Knowledge Level', value: formatAnswer('q2_5_2') },
+                            { key: 'Strategic Position', value: formatAnswer('q2_5_3') },
+                            { key: 'New/Unseen Terminology', value: formatAnswer('q2_5_4') },
+                            { key: 'Hallucination Risk', value: formatAnswer('q2_5_5') },
+                            { key: 'Abstention Required', value: formatAnswer('q2_5_6') }
+                        ]
+                    },
+                    {
+                        title: '4 · Historic Intelligence & Competitive Moat',
+                        items: [
+                            { key: 'Unique Historic Data', value: formatAnswer('q3_7_1') },
+                            { key: 'Time Span', value: formatAnswer('q3_7_2') },
+                            { key: 'Proprietary Insights Captured', value: formatAnswer('q3_7_3') },
+                            { key: 'Creates Differentiation', value: formatAnswer('q3_7_4') },
+                            { key: 'Data Cleanliness', value: formatAnswer('q3_7_5') },
+                            { key: 'Legal Usability', value: formatAnswer('q3_7_6') }
+                        ]
+                    },
+                    {
+                        title: '5 · Model Strategy',
+                        items: [
+                            { key: 'Gap Type', value: formatAnswer('q2_1_1') },
+                            { key: 'Gap Depth', value: formatAnswer('q2_1_2') },
+                            { key: 'Base Model Category', value: formatAnswer('q4_1_2') },
+                            { key: 'Model Size Tier', value: formatAnswer('q4_1_3') },
+                            { key: 'Tuning Approach', value: formatAnswer('q4_2_1') },
+                            { key: 'DAPT Necessity', value: formatAnswer('q4_6_1') },
+                            { key: 'Recommended Stack', value: formatAnswer('q4_6_4') },
+                            { key: 'Stack Justification', value: STATE.answers['q4_6_6'] || '' }
+                        ]
+                    },
+                    {
+                        title: '6 · Data Contract',
+                        items: [
+                            { key: 'Modalities', value: formatAnswer('q3_1_1') },
+                            { key: 'Data Format', value: formatAnswer('q3_1_2') },
+                            { key: 'Volume', value: formatAnswer('q3_2_1') },
+                            { key: 'Coverage', value: formatAnswer('q3_2_2') },
+                            { key: 'Quality', value: formatAnswer('q3_3_1') },
+                            { key: 'PII Status', value: formatAnswer('q3_4_1') },
+                            { key: 'Consent for Training', value: formatAnswer('q3_4_2') },
+                            { key: 'DAPT Corpus Adequate', value: formatAnswer('q4_6_2') },
+                            { key: 'SME Validation Committed', value: formatAnswer('q3_6_3') }
+                        ]
+                    },
+                    {
+                        title: '7 · Execution Plan',
+                        items: [
+                            { key: 'Language Coverage', value: formatAnswer('q4_3_1') },
+                            { key: 'Context Window', value: formatAnswer('q4_3_2') },
+                            { key: 'Structured Output', value: formatAnswer('q4_4_1') },
+                            { key: 'Multi-step Reasoning', value: formatAnswer('q4_4_2') },
+                            { key: 'Tool Calling', value: formatAnswer('q4_4_3') },
+                            { key: 'Latency SLA', value: formatAnswer('q4_5_1') },
+                            { key: 'Deployment Environment', value: formatAnswer('q4_5_3') },
+                            { key: 'Catastrophic Forgetting Mitigation', value: formatAnswer('q4_6_5') }
+                        ]
+                    },
+                    {
+                        title: '8 · SME & Business Responsibilities',
+                        items: [
+                            { key: 'SME Labelling Guidelines', value: formatAnswer('q3_6_1') },
+                            { key: 'SME Ground Truth Definition', value: formatAnswer('q3_6_2') },
+                            { key: 'SME Review of Outputs', value: formatAnswer('q6_3_1') },
+                            { key: 'SME Business Validation', value: formatAnswer('q6_3_2') },
+                            { key: 'SME Sign-off Authority', value: formatAnswer('q6_4_4') },
+                            { key: 'Business Baseline Defined', value: formatAnswer('q1_4_1') },
+                            { key: 'Business Target Defined', value: formatAnswer('q1_4_2') }
+                        ]
+                    },
+                    {
+                        title: '9 · Risk & Governance',
+                        items: [
+                            { key: 'Risk Level', value: formatAnswer('q5_1_1') },
+                            { key: 'EU AI Act / High-risk', value: formatAnswer('q5_1_2') },
+                            { key: 'Human-in-the-loop', value: formatAnswer('q5_1_3') },
+                            { key: 'Confidence Thresholds', value: formatAnswer('q5_2_1') },
+                            { key: 'Rejection Conditions', value: formatAnswer('q5_2_2') },
+                            { key: 'Escalation Rules', value: formatAnswer('q5_2_3') },
+                            { key: 'Fallback Strategy', value: formatAnswer('q5_3_3') },
+                            { key: 'Model Risk Framework', value: formatAnswer('q5_4_1') }
+                        ]
+                    },
+                    {
+                        title: '10 · Success Criteria',
+                        items: [
+                            { key: 'KPI-Aligned Metrics', value: formatAnswer('q6_1_1') },
+                            { key: 'Hallucination Measurement', value: formatAnswer('q6_1_2') },
+                            { key: 'Benchmark Dataset', value: formatAnswer('q6_2_1') },
+                            { key: 'Edge Case Testing', value: formatAnswer('q6_2_3') },
+                            { key: 'Accuracy Threshold', value: formatAnswer('q6_4_1') },
+                            { key: 'Production Monitoring', value: formatAnswer('q6_5_1') },
+                            { key: 'Rollback Tested', value: formatAnswer('q6_5_2') },
+                            { key: 'Sign-off Authorities Named', value: formatAnswer('q6_5_3') }
+                        ]
+                    },
+                    {
+                        title: '11 · Tech Platform & Base Model Recommendations',
+                        items: [
+                            { key: 'Recommended Platforms', value: STATE.answers['q7_1_1'] || '' },
+                            { key: 'Platform Justification', value: STATE.answers['q7_1_2'] || '' },
+                            { key: 'Platform Trade-offs', value: STATE.answers['q7_1_3'] || '' },
+                            { key: 'Specific Recommended Models', value: STATE.answers['q7_2_1'] || '' },
+                            { key: 'Model Justification', value: STATE.answers['q7_2_2'] || '' },
+                            { key: 'Models Considered & Rejected', value: STATE.answers['q7_2_3'] || '' }
+                        ]
+                    },
+                    {
+                        title: '12 · Primary Consulting Observations',
+                        items: [
+                            { key: 'Top Observations', value: STATE.answers['q7_3_1'] || '' },
+                            { key: 'Concerns & Risks for Customer', value: STATE.answers['q7_3_2'] || '' },
+                            { key: 'Opportunities Beyond This Use Case', value: STATE.answers['q7_3_3'] || '' }
+                        ]
+                    },
+                    {
+                        title: '13 · Next Steps & Timeline',
+                        items: [
+                            { key: 'Sequenced Next Steps', value: STATE.answers['q7_4_1'] || '' },
+                            { key: 'Critical Path Dependencies', value: STATE.answers['q7_4_2'] || '' },
+                            { key: 'Customer Decision Points', value: STATE.answers['q7_4_3'] || '' }
+                        ]
+                    },
+                    {
+                        title: '14 · Final Consulting Recommendation',
+                        items: [
+                            { key: 'Recommendation', value: STATE.answers['q7_5_1'] || '' },
+                            { key: 'Confidence Level', value: formatAnswer('q7_5_2') }
+                        ]
+                    }
+                ];
+
+                return sections.map(s => `
+        <div class="blueprint-card">
+          <h4>${s.title}</h4>
+          ${s.items.map(item => `
+            <div class="bp-item">
+              <div class="bp-key">${item.key}</div>
+              <div class="bp-value ${!item.value ? 'empty' : ''}">${item.value ? escapeHtml(item.value) : 'Not yet captured'}</div>
+            </div>
+          `).join('')}
+        </div>
+      `).join('');
+            }
+
+            function formatAnswer(qid) {
+                const v = STATE.answers[qid];
+                if (v === undefined || v === null || v === '') return '';
+                for (const gate of FRAMEWORK) {
+                    for (const dim of gate.dimensions) {
+                        const q = dim.questions.find(x => x.id === qid);
+                        if (q) {
+                            if (Array.isArray(v)) {
+                                return v.map(val => {
+                                    const opt = q.options && q.options.find(o => o.value === val);
+                                    return opt ? opt.label : val;
+                                }).join(', ');
+                            }
+                            if (q.options) {
+                                const opt = q.options.find(o => o.value === v);
+                                if (opt) return opt.label;
+                            }
+                            if (q.type === 'yes-no-partial') {
+                                return v.charAt(0).toUpperCase() + v.slice(1);
+                            }
+                            return String(v);
+                        }
+                    }
+                }
+                return String(v);
+            }
+
+            function formatVerdict(v) {
+                if (!v) return 'Not yet determined';
+                return {
+                    'pass': '✓ RECOMMENDED — Proceed with fine-tuning per blueprint',
+                    'fail': '▲ RECONSIDER — Significant gaps identified, evaluate alternatives or close gaps first',
+                    'pending': '◐ CONDITIONAL — Open items in discussion; proceed with tracked conditions',
+                    'in-progress': '◇ REVIEW IN PROGRESS — Complete the framework for full recommendation'
+                }[v] || v;
+            }
+
+            function renderNextSteps(overall) {
+                let steps = [];
+                if (overall === 'fail') {
+                    steps = [
+                        '<strong>Resolve failing dimensions</strong> — review each Fail verdict and its rationale; address the root concern before proceeding.',
+                        '<strong>Reconsider non-training alternatives</strong> — if Gate 2 flagged prompting, RAG, agents, or public models as viable, revisit that path.',
+                        '<strong>Engage governance early</strong> — Legal, Compliance, Model Risk for any issue requiring formal review.',
+                        '<strong>Re-run this assessment</strong> after resolution to confirm the new path forward.'
+                    ];
+                } else if (overall === 'pending') {
+                    steps = [
+                        '<strong>Document conditions as tracked risks</strong> — every Pending verdict gets a named owner and resolution date.',
+                        '<strong>Proceed to fine-tuning execution planning</strong> — the framework supports a "proceed with conditions" posture.',
+                        '<strong>Establish review cadence</strong> — typically fortnightly during the active programme.',
+                        '<strong>Update this assessment</strong> as conditions resolve, replacing Pending with Pass.'
+                    ];
+                } else if (overall === 'pass') {
+                    steps = [
+                        '<strong>Proceed to fine-tuning execution</strong> with the blueprint specified above, on your chosen platform.',
+                        '<strong>Archive this assessment</strong> as the audit trail document for the training decision.',
+                        '<strong>Establish operating cadence</strong> per Gate 6 — monitoring, validation cycles, sign-off authorities.',
+                        '<strong>Plan for the next SLM</strong> — frameworks compound in value as the SLM portfolio grows.'
+                    ];
+                } else {
+                    steps = [
+                        '<strong>Continue the assessment</strong> — return to gates with pending or in-progress status.',
+                        '<strong>Engage SMEs early</strong> for Gates 1, 3, 6 which are SME-intensive.',
+                        '<strong>Capture rich notes</strong> — the Detailed Response textareas are preserved in JSON export.',
+                        '<strong>Auto-save is active</strong> — export to JSON for cross-device continuity or audit archiving.'
+                    ];
+                }
+                return `<ul class="next-steps">${steps.map(s => `<li>${s}</li>`).join('')}</ul>`;
+            }
+
+            function generateLlmPrompt() {
+                // Build a complete, self-contained data structure with every question,
+                // every answer (raw + label), every note, verdict, and rationale.
+                // The LLM should be able to generate a full report AS-IS from this.
+                const ownerLabels = { business: 'Business', sme: 'SME', ds: 'Data Scientist', risk: 'Risk & Compliance' };
+                const verdictLabels = { pass: 'Ready', fail: 'Needs Work', pending: 'In Discussion', 'in-progress': 'In Progress' };
+
+                const completeData = {
+                    framework_name: 'Domain AI Model Tuning Decision Framework',
+                    framework_version: STATE.meta.frameworkVersion || 'v3.0',
+                    purpose: 'Captures all strategic, technical, data, governance, and consulting inputs required before fine-tuning a domain AI model. Generated by collaborative review across Business, SME, Data Scientist, and Risk stakeholders.',
+                    assessment: {
+                        name: STATE.meta.assessmentName || 'Unspecified',
+                        client: STATE.meta.client || 'Unspecified',
+                        industry: STATE.meta.industry || 'Unspecified',
+                        lead_consultant: STATE.meta.leadConsultant || 'Unspecified',
+                        started_at: STATE.meta.startedAt || null,
+                        last_updated_at: STATE.meta.lastUpdatedAt || null,
+                        overall_status: verdictLabels[computeOverallVerdict()] || 'In Progress',
+                        overall_status_code: computeOverallVerdict() || 'in-progress'
+                    },
+                    gates: FRAMEWORK.map(gate => ({
+                        gate_number: gate.num,
+                        gate_id: gate.id,
+                        gate_title: gate.title,
+                        gate_eyebrow: gate.eyebrow,
+                        gate_purpose: gate.intro,
+                        owners: (gate.owners || []).map(o => ownerLabels[o] || o),
+                        deliverable: gate.deliverable,
+                        gate_status: verdictLabels[computeGateVerdict(gate)] || 'Not Reviewed',
+                        gate_status_code: computeGateVerdict(gate) || 'unset',
+                        dimensions: gate.dimensions.map(dim => {
+                            const dimVerdict = STATE.verdicts[dim.id];
+                            return {
+                                dimension_tag: dim.tag,
+                                dimension_id: dim.id,
+                                dimension_title: dim.title,
+                                dimension_purpose: dim.desc,
+                                dimension_owner: ownerLabels[dim.owner] || dim.owner || 'Unspecified',
+                                dimension_status: verdictLabels[dimVerdict] || 'Not Reviewed',
+                                dimension_status_code: dimVerdict || 'unset',
+                                consulting_observation: STATE.rationales[dim.id] || null,
+                                detailed_notes: STATE.notes[dim.id] || null,
+                                questions: dim.questions.map(q => {
+                                    const rawAnswer = STATE.answers[q.id];
+                                    const labelAnswer = formatAnswer(q.id);
+                                    return {
+                                        question_id: q.id,
+                                        question_text: q.text,
+                                        question_help: q.help || null,
+                                        question_type: q.type,
+                                        required: q.required || false,
+                                        available_options: q.options ? q.options.map(o => ({ value: o.value, label: o.label })) : null,
+                                        raw_answer: rawAnswer === undefined ? null : rawAnswer,
+                                        answer_label: labelAnswer || null,
+                                        answered: rawAnswer !== undefined && rawAnswer !== '' && !(Array.isArray(rawAnswer) && rawAnswer.length === 0)
+                                    };
+                                })
+                            };
+                        })
+                    }))
+                };
+
+                // Build the prompt string
+                const lines = [];
+                lines.push('# Domain AI Model Tuning Decision Framework — Final Report Generation');
+                lines.push('');
+                lines.push('You are a senior AI strategist with deep expertise in domain-specific language model fine-tuning. The JSON document below captures a complete consulting-led assessment of a customer engagement. It contains the full framework (gates, dimensions, questions, available options), every answer the customer team has given, every consulting observation, every detailed note, and every status mark.');
+                lines.push('');
+                lines.push('## Your Task');
+                lines.push('Produce a comprehensive **Fine-Tuning Decision Report** for the customer. The report should be in consulting tone — guiding, recommending, advising — not judgemental. Every claim must trace to evidence in the JSON. Where the JSON is silent on a topic, explicitly call it out as a gap to close, not invented as fact.');
+                lines.push('');
+                lines.push('## Required Report Structure');
+                lines.push('');
+                lines.push('### 1. Executive Summary (4-6 sentences)');
+                lines.push('Board-ready summary. The use case in one line, the recommendation, the dominant reason, the headline next step.');
+                lines.push('');
+                lines.push('### 2. Strategic Recommendation');
+                lines.push('Clear directive — proceed with fine-tuning, reconsider approach, or proceed conditionally. Justify with specific evidence from the JSON. If reconsider, name the alternative architecture (RAG, prompting, agents, existing model). If conditional, list the conditions that must be resolved.');
+                lines.push('');
+                lines.push('### 3. Domain Niche-ness & Hallucination Risk Analysis');
+                lines.push('Pull from Gate 2.5. How niche is this domain (1-10)? What is the hallucination risk if used without domain adaptation? Are there new/unseen vocabulary patterns? What is the consequence of hallucination in production? Specific recommendation: is DAPT essential, or will SFT/LoRA suffice?');
+                lines.push('');
+                lines.push('### 4. Competitive Moat Analysis');
+                lines.push('Pull from Gate 3.7. Does the organisation hold proprietary historic intelligence? Does training on this data create competitive differentiation? Is the differentiation defensible? Strategic recommendation for how to maximise the moat.');
+                lines.push('');
+                lines.push('### 5. Recommended Training Method Stack');
+                lines.push('Pull primarily from Gate 4.6 (especially Q4.6.4 — the free-text training stack written by the consultant) plus Gate 4.2 (tuning methods selected). State the recommended sequence (e.g., DAPT → SFT → DPO), justify each stage against the captured evidence, and identify gating criteria between stages.');
+                lines.push('');
+                lines.push('### 6. Data Contract Summary');
+                lines.push('Summarise the data position from Gate 3: modality, volume, quality, coverage, bias, PII/compliance, historic intelligence, SME validation capacity. Highlight any data gaps that must close before training begins.');
+                lines.push('');
+                lines.push('### 7. Tech Platform & Base Model Recommendation');
+                lines.push('Pull heavily from Gate 7 (Q7.1.1, Q7.1.2, Q7.1.3, Q7.2.1, Q7.2.2, Q7.2.3). These are free-text consulting recommendations — paraphrase faithfully, do not invent platforms not mentioned. State the recommended platforms, the specific base models, justifications, and trade-offs.');
+                lines.push('');
+                lines.push('### 8. Execution Roadmap with Named Responsibilities');
+                lines.push('Pull from Gate 7 (Q7.4.1 — sequenced next steps) supplemented by other gate evidence. Phase-by-phase roadmap with named owners (Business / SME / DS / Risk), key activities, deliverables, and durations.');
+                lines.push('');
+                lines.push('### 9. Risks, Open Items & Mitigations (Prioritised)');
+                lines.push('From all gates marked "In Discussion" or "Needs Work", plus Q7.3.2 (consultant concerns), plus Q7.4.2 (critical-path dependencies). For each: risk description, likelihood, impact, mitigation, owner.');
+                lines.push('');
+                lines.push('### 10. Success Criteria & Acceptance Definition');
+                lines.push('From Gate 6. KPI-aligned metrics, hallucination measurement, benchmark dataset, edge case testing, accuracy thresholds, sign-off authorities, post-go-live cadence.');
+                lines.push('');
+                lines.push('### 11. Primary Consulting Observations');
+                lines.push('Pull faithfully from Gate 7.3 (Q7.3.1 — top observations, Q7.3.2 — concerns, Q7.3.3 — opportunities). These are the consultant\'s own words — paraphrase respectfully, don\'t add or substitute observations not present in the JSON.');
+                lines.push('');
+                lines.push('### 12. Final Recommendation & Confidence Level');
+                lines.push('Pull from Gate 7.5 (Q7.5.1 — final consulting recommendation, Q7.5.2 — confidence level). This is the central recommendation the entire report orbits around. Render it sharply, evidence-based, directive.');
+                lines.push('');
+                lines.push('### 13. What Could Go Wrong (Honest Assessment)');
+                lines.push('A candid one-paragraph assessment of what is most likely to fail in execution. What assumption is the program most exposed to? What would an experienced consultant watch most closely?');
+                lines.push('');
+                lines.push('## Style Guidance');
+                lines.push('- Tone: consulting partner advising a senior client. Confident but candid.');
+                lines.push('- Avoid pass/fail language. Use "ready", "in discussion", "needs work", "recommended", "reconsider", "conditional".');
+                lines.push('- Quote specific questions and answers where it strengthens the argument.');
+                lines.push('- Where consultant observations exist in Gate 7 free-text, lean on them heavily — they are the most senior judgement in the JSON.');
+                lines.push('- Where the JSON has gaps, name them as gaps; do not invent.');
+                lines.push('- Length: 3000-5000 words for a complete report. More if the engagement is complex.');
+                lines.push('');
+                lines.push('---');
+                lines.push('');
+                lines.push('## Complete Assessment Data (JSON)');
+                lines.push('');
+                lines.push('```json');
+                lines.push(JSON.stringify(completeData, null, 2));
+                lines.push('```');
+                lines.push('');
+                lines.push('---');
+                lines.push('');
+                lines.push('## Begin Report');
+                lines.push('Generate the complete Fine-Tuning Decision Report — all 13 sections, in order, in consulting tone.');
+                return lines.join('\n');
+            }
+
+            function copyLlmPrompt() {
+                const text = generateLlmPrompt();
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(() => {
+                        alert('LLM prompt copied to clipboard. Paste into your LLM of choice to generate the report.');
+                    }).catch(err => fallbackCopy(text));
+                } else {
+                    fallbackCopy(text);
+                }
+            }
+
+            function fallbackCopy(text) {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                try { document.execCommand('copy'); alert('Copied to clipboard.'); }
+                catch (e) { alert('Copy failed — please select and copy manually from the report.'); }
+                document.body.removeChild(ta);
+            }
+
+            /* ═══════════════════════════════════════════════════════════════════════════
+               INIT
+               ═══════════════════════════════════════════════════════════════════════════ */
+            /* DOMContentLoaded bootstrap moved to __boot() */
+
+    /* ---------------- host bridge (additive; reuses the original functions) ---------------- */
+    function __showActions(on) {
+        ['btn-export', 'btn-reset'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = on ? 'inline-flex' : 'none';
+        });
+    }
+    function __boot() {   // original DOMContentLoaded body
+        loadState();
+        if (STATE.meta && STATE.meta.startedAt) {
+            __showActions(true);
+        }
+    }
+    function __open(state) {
+        STATE = state;
+        __showActions(true);
+        switchMode('assess');
+    }
+    function __close() {
+        STATE = {
+            meta: { assessmentName: '', client: '', industry: '', leadConsultant: '', startedAt: null, lastUpdatedAt: null, frameworkVersion: 'v3.0' },
+            answers: {}, notes: {}, verdicts: {}, rationales: {},
+            currentGate: null
+        };
+        __showActions(false);
+        switchMode('doc');
+    }
+    const __LABELS = { pass: 'Ready', fail: 'Needs Work', pending: 'In Discussion', 'in-progress': 'In Progress' };
+    function __answered(v) {
+        return !(v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0));
+    }
+    function __summary() {
+        const overall = computeOverallVerdict();
+        let total = 0, answered = 0;
+        FRAMEWORK.forEach(g => g.dimensions.forEach(d => d.questions.forEach(q => {
+            total++;
+            if (__answered(STATE.answers[q.id])) answered++;
+        })));
+        const gates = FRAMEWORK.map(g => computeGateVerdict(g));
+        return {
+            overall, overall_label: overall ? __LABELS[overall] : 'Not started',
+            answered, total_questions: total,
+            gates_decided: gates.filter(v => v && v !== 'in-progress').length,
+            gates_total: FRAMEWORK.length,
+        };
+    }
+    function __reportModel() {
+        const overall = computeOverallVerdict();
+        const tmp = window.document.createElement('div');
+        tmp.innerHTML = renderNextSteps(overall) || '';
+        let nextSteps = Array.from(tmp.querySelectorAll('li')).map(li => li.textContent.trim()).filter(Boolean);
+        if (!nextSteps.length && tmp.textContent.trim()) nextSteps = [tmp.textContent.trim()];
+        return {
+            meta: STATE.meta,
+            overall, overall_label: formatVerdict(overall),
+            summary: __summary(),
+            next_steps: nextSteps,
+            gates: FRAMEWORK.map(g => ({
+                id: g.id, num: g.num, title: g.title, deliverable: g.deliverable || '',
+                verdict: computeGateVerdict(g), verdict_label: __LABELS[computeGateVerdict(g)] || 'Not started',
+                dimensions: g.dimensions.map(d => ({
+                    id: d.id, tag: d.tag, title: d.title,
+                    verdict: STATE.verdicts[d.id] || null,
+                    verdict_label: __LABELS[STATE.verdicts[d.id]] || 'Not set',
+                    rationale: STATE.rationales[d.id] || '',
+                    notes: STATE.notes[d.id] || '',
+                    questions: d.questions.map(q => ({ id: q.id, text: q.text, answer: formatAnswer(q.id) })),
+                })),
+            })),
+        };
+    }
+
+    return {
+        boot: __boot, open: __open, close: __close,
+        getState: () => STATE, summary: __summary, reportModel: __reportModel,
+        generateLlmPrompt,
+        handlers: { escapeHtml, escapeXml, switchMode, saveState, loadState, startNewAssessment, commitNewAssessment, resetAssessment, exportAssessment, importAssessment, jumpToGate, renderAssessorEmpty, renderAssessor, renderRail, renderGateWorkspace, renderDimension, renderQuestion, renderYesNoPartial, renderSingleSelect, renderMultiSelect, renderNumber, renderText, renderScale, renderSelectAndText, renderDimensionNotes, renderVerdictOverride, renderGateFooter, renderStatePanel, computeGateVerdict, attachInputListeners, toggleDimension, renderFlowView, renderFullFlowChart, gateColorByIdx, colorFromVerdict, truncateText, downloadFlowSvg, computeOverallVerdict, renderReportView, renderReportGate, renderBlueprintSynthesis, formatAnswer, formatVerdict, renderNextSteps, generateLlmPrompt, copyLlmPrompt, fallbackCopy },
+    };
+}

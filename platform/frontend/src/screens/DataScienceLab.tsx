@@ -281,7 +281,7 @@ function workspaceUrl(raw: string): string {
     throw new Error("Backend returned a private SSH tunnel address");
   }
   if (url.origin !== window.location.origin) {
-    throw new Error("Workspace URL must use the AI Studio origin");
+    throw new Error("Workspace URL must use the Domain AI Studio origin");
   }
   return url.toString();
 }

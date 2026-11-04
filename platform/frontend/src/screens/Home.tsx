@@ -42,7 +42,7 @@ export function Home({ go }: { go: (s: any) => void }) {
           Build, run &amp; observe <span style={{ color: "var(--accent)" }}>agentic workflows</span>
         </div>
         <div className="muted" style={{ marginTop: 6, fontSize: 14 }}>
-          TCS AI Studio — build, run and observe enterprise agentic workflows on a single canvas.
+          TCS Domain AI Studio — build, run and observe enterprise agentic workflows on a single canvas.
         </div>
         <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
           <Button large intent="primary" icon="flows" text="Open Workflow Studio" onClick={() => go("studio")} />

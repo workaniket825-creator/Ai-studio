@@ -1,4 +1,4 @@
-# TCS AI Studio — Platform Guide & Build Reference (v1.0)
+# TCS Domain AI Studio — Platform Guide & Build Reference (v1.0)
 
 An open-source, self-hostable **agentic-AI platform**: design multi-agent workflows, ground them
 in a curated **ontology**, call **real REST APIs / tools / connectors**, run a **Data Science Lab**
@@ -26,7 +26,7 @@ team — or another LLM — to reconstruct the platform.
 
 ## 1. Overview & principles
 
-TCS AI Studio lets a team compose **agents** (LLM personas with tools) into **workflows**, run them,
+TCS Domain AI Studio lets a team compose **agents** (LLM personas with tools) into **workflows**, run them,
 and observe/govern the results. Design principles, held throughout:
 
 - **Open-source only; no cloud-platform lock-in.** Model access is via API keys (Azure OpenAI,
@@ -1674,7 +1674,7 @@ and I'll tighten the prompt further.
 ## DSLab SSH Workspace — real tunnel + HTTP/WebSocket proxy (fix1 + fix2)
 
 Applied the validated patches exactly. The workspace no longer returns a browser-loopback URL;
-it proxies Jupyter through AI Studio over a real backend-owned SSH tunnel.
+it proxies Jupyter through Domain AI Studio over a real backend-owned SSH tunnel.
 
 **Flow:** Browser → `/api/v1/dsl/runtimes/<rid>/lab/` → FastAPI HTTP/WebSocket proxy →
 backend-local SSH forward → target `127.0.0.1:8888`.

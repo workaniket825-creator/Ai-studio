@@ -273,6 +273,15 @@ export const api = {
 
   // model endpoints (UI-managed LLM connections)
   listEndpoints: () => fetch(`${base}/model-endpoints`).then(j),
+
+  // Domain AI › Decision Intelligence FT (shared assessments, AI report, Word report)
+  dfmList: () => getJson("/domain-ai/dfm/assessments"),
+  dfmGet: (id: string) => getJson(`/domain-ai/dfm/assessments/${id}`),
+  dfmCreate: (body: object) => send("/domain-ai/dfm/assessments", "POST", body),
+  dfmUpdate: (id: string, body: object) => send(`/domain-ai/dfm/assessments/${id}`, "PUT", body),
+  dfmDelete: (id: string) => send(`/domain-ai/dfm/assessments/${id}`, "DELETE"),
+  dfmAiReport: (id: string, body: object) => send(`/domain-ai/dfm/assessments/${id}/ai-report`, "POST", body),
+  dfmWord: (id: string, body: object) => send(`/domain-ai/dfm/assessments/${id}/word`, "POST", body),
   addEndpoint: (data: object) => send("/model-endpoints", "POST", data),
   deleteEndpoint: (id: string) => send(`/model-endpoints/${id}`, "DELETE"),
   testEndpoint: (id: string) => send(`/model-endpoints/${id}/test`, "POST"),

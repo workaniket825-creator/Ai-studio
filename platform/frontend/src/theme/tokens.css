@@ -230,3 +230,8 @@ body {
   margin-bottom: 4px; display: flex; align-items: center; gap: 5px; }
 .thinking-dots::after { content: "…"; animation: blink 1.2s steps(4) infinite; }
 @keyframes blink { 0%,100%{opacity:.3} 50%{opacity:1} }
+
+/* sidebar sections with sub-items (Domain AI › …) */
+.nav-group { display: flex; flex-direction: column; }
+.nav-rail .bp5-button.nav-sub { padding-left: 30px; font-size: 13px; }
+.nav-rail .bp5-button.nav-sub .bp5-icon { opacity: .85; }
