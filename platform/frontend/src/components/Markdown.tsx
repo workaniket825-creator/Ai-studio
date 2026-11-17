@@ -55,8 +55,29 @@ export function Markdown({ text }: { text: string }) {
   const flushOl = () => { if (ol.length) { out.push(<ol key={`ol${out.length}`} className="md-ol">{ol}</ol>); ol = []; } };
   const flushAll = () => { flushPara(); flushUl(); flushOl(); };
 
+  // GFM-style tables: a header row, a |---| separator row, then body rows
+  const cells = (row: string) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  const isSep = (row: string) => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(row);
+  let tableUntil = -1;
+
   lines.forEach((raw, i) => {
     const ln = raw;
+    if (i <= tableUntil) return;
+    if (!inCode && /^\s*\|.*\|\s*$/.test(ln) && i + 1 < lines.length && isSep(lines[i + 1])) {
+      flushAll();
+      const head = cells(ln);
+      const body: string[][] = [];
+      let j = i + 2;
+      while (j < lines.length && /^\s*\|.*\|\s*$/.test(lines[j])) { body.push(cells(lines[j])); j++; }
+      tableUntil = j - 1;
+      const k = `tb${out.length}`;
+      out.push(
+        <table key={k} className="md-table">
+          {head.some((h) => h) && <thead><tr>{head.map((h, c) => <th key={c}>{inline(h, `${k}h${c}`)}</th>)}</tr></thead>}
+          <tbody>{body.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci}>{inline(c, `${k}r${ri}c${ci}`)}</td>)}</tr>)}</tbody>
+        </table>);
+      return;
+    }
     if (/^\s*```/.test(ln)) {
       if (!inCode) { flushAll(); inCode = true; codeLang = ln.replace(/^\s*```/, "").trim(); code = []; }
       else { out.push(<pre key={`pre${out.length}`} className="md-pre"><code data-lang={codeLang}>{code.join("\n")}</code></pre>); inCode = false; }

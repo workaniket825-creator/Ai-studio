@@ -186,6 +186,10 @@ class AgentCard(BaseModel):
     io_contract: IOContract = Field(default_factory=IOContract)
     tools: list[ToolBinding] = Field(default_factory=list)
     tool_policy: str = "auto"  # auto | required | force:<tool_fn_name> — deterministic tool use
+    # Optional platform step handler (e.g. "finetune_planner" | "finetune_executor" |
+    # "finetune_reporter"). When set, both runtimes delegate this node to the registered
+    # handler (app/runtime/handlers.py) instead of a plain model call. None = normal agent.
+    handler: Optional[str] = None
     collaboration: CollaborationBlock = Field(default_factory=CollaborationBlock)
     memory_config: MemoryConfig = Field(default_factory=MemoryConfig)
     guardrails: Guardrails = Field(default_factory=Guardrails)
@@ -264,6 +268,9 @@ class Run(BaseModel):
     node_outputs: list[dict[str, Any]] = Field(default_factory=list)  # per-agent content + steps
     final_output: str = ""       # the workflow's final answer (last node output)
     error: str = ""              # honest error message when a run fails
+    # structured, persisted progress for long-running steps (e.g. fine-tuning). Survives page
+    # reloads and backend restarts, unlike the in-memory activity ring. {} for ordinary runs.
+    progress: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=_now)
     updated_at: str = Field(default_factory=_now)
 

@@ -219,6 +219,13 @@ class LiveRuntime:
 
         total_in = total_out = 0
         prior = ""  # upstream context carried forward
+        # resume support: nodes already recorded on this run (a re-attached long-running run
+        # after a backend restart) are not executed again. Empty for every fresh run.
+        done_nodes = {n.get("node_id") for n in run.node_outputs}
+        if done_nodes:
+            total_in, total_out = run.input_tokens, run.output_tokens
+            for n in run.node_outputs:
+                prior += f"\n[{n.get('agent')}]: {n.get('output', '')}"
         user_input = run.input if isinstance(run.input, dict) else {"input": run.input}
         goal = workflow.goal_prompt or ""
 
@@ -244,15 +251,38 @@ class LiveRuntime:
                 runs_repo.upsert(run.model_dump(by_alias=True))
                 await self._emit(rid, ActivityKind.error, run.error, level="warn")
                 return
-            executed += 1
-
             agent = step["agent"]
             node_id = step["node_id"]
+            if node_id in done_nodes:
+                continue
+            executed += 1
             steps: list[str] = []
 
             for guidance in steer.drain(rid):
                 run.steers.append({"text": guidance})
                 steps.append(f"Steer: {guidance}")
+
+            # platform step handlers (e.g. fine-tuning) own the whole step — shared with ADK
+            from .handlers import handler_of, run_handler_node
+            _h = handler_of(agent)
+            if _h:
+                run.input_tokens, run.output_tokens = total_in, total_out
+                ok = await run_handler_node(
+                    run=run, workflow=workflow, node_id=node_id, agent=agent, handler=_h,
+                    prior=prior,
+                    emit=lambda kind, label, **kw: self._emit(rid, kind, label, **kw))
+                total_in, total_out = run.input_tokens, run.output_tokens
+                if not ok:
+                    return
+                prior += f"\n[{agent}]: {run.node_outputs[-1]['output']}"
+                if node_id in workflow.approval_gates:
+                    run.status = RunStatus.awaiting_approval
+                    runs_repo.upsert(run.model_dump(by_alias=True))
+                    await self._emit(rid, ActivityKind.approval_pending,
+                                     "Waiting for your approval to continue…", level="warn",
+                                     node_id=node_id)
+                    return
+                continue
 
             model, params, system, agent_tools = self._resolve_model(agent)
             if not model:

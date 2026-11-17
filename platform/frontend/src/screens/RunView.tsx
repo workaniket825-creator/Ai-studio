@@ -3,6 +3,7 @@ import { Button, Callout, Card, Tag, InputGroup, Tabs, Tab, Collapse, Icon } fro
 import { ActivityStream } from "../components/ActivityStream";
 import { Markdown } from "../components/Markdown";
 import { api, Workflow } from "../api/client";
+import { FineTuneProgress } from "../components/FineTuneProgress";
 
 function AgentOutput({ no }: { no: any }) {
   const [open, setOpen] = useState(false);
@@ -51,7 +52,7 @@ export function RunView({ runId, workflow }: { runId: string; workflow: Workflow
         <Callout intent="success" icon="document" title="Generated files" style={{ marginBottom: 12 }}>
           {artifacts.map((a: any) => (
             <div key={a.name} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-              <a href={api.artifactUrl(runId, a.name)} download>
+              <a href={a.path ? api.filesDownloadUrl(a.path) : api.artifactUrl(runId, a.name)} download>
                 <Button small intent="primary" icon="download" text={a.name} />
               </a>
               <span className="muted" style={{ fontSize: 11 }}>{a.mime}</span>
@@ -85,7 +86,11 @@ export function RunView({ runId, workflow }: { runId: string; workflow: Workflow
               <Button icon="cross" text="Reject" onClick={reject} />
             </Callout>
           )}
-          {run?.status === "running" && (
+          {run?.progress?.kind === "finetune" && (
+            <FineTuneProgress p={run.progress} status={run.status} error={run.error}
+              onStop={() => api.cancelRun(runId).then(refresh)} />
+          )}
+          {run?.status === "running" && !run?.progress?.kind && (
             <Card>
               <b>Steer this run</b>
               <div className="muted" style={{ fontSize: 12, margin: "4px 0 8px" }}>Inject guidance while it runs.</div>

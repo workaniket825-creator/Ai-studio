@@ -88,6 +88,50 @@ class LabClient:
         body = {"type": "notebook", "format": "json", "content": nb}
         return self._req("PUT", f"api/contents/{path.strip('/')}", json=body).json()
 
+    # --- helpers for background notebook jobs (fine-tuning) ---------------------------------
+    def mkdirs(self, path: str) -> None:
+        """Create a directory and its parents (idempotent)."""
+        cur = ""
+        for seg in [s for s in path.strip("/").split("/") if s]:
+            cur = f"{cur}/{seg}" if cur else seg
+            try:
+                d = self.get(cur, content=False)
+                if d.get("type") != "directory":
+                    raise LabError(f"'{cur}' exists and is not a directory")
+            except LabNotOpen:
+                raise
+            except LabError as e:
+                if "HTTP 404" not in str(e):
+                    raise
+                self._req("PUT", f"api/contents/{cur}", json={"type": "directory"})
+
+    def put_base64(self, path: str, data_b64: str) -> dict:
+        body = {"type": "file", "format": "base64", "content": data_b64}
+        return self._req("PUT", f"api/contents/{path.strip('/')}", json=body, timeout=600).json()
+
+    def read_text(self, path: str) -> str:
+        d = self._req("GET", f"api/contents/{path.strip('/')}",
+                      params={"content": 1, "type": "file", "format": "text"}).json()
+        return d.get("content") or ""
+
+    def read_bytes(self, path: str, timeout: float = 600.0) -> bytes:
+        import base64
+        d = self._req("GET", f"api/contents/{path.strip('/')}",
+                      params={"content": 1, "type": "file", "format": "base64"},
+                      timeout=timeout).json()
+        return base64.b64decode(d.get("content") or "")
+
+    def exists(self, path: str) -> bool:
+        try:
+            self.get(path, content=False)
+            return True
+        except LabNotOpen:
+            raise
+        except LabError as e:
+            if "HTTP 404" in str(e):
+                return False
+            raise
+
     # --------------------------------------------------------------- kernels
     def ensure_session(self, path: str, kernel_name: str = "python3") -> str:
         """Return a live kernel id for `path` (reuses the existing session, so state persists)."""

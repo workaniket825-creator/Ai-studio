@@ -5,6 +5,7 @@ import { api, Workflow } from "../api/client";
 import { Markdown } from "../components/Markdown";
 import { toast } from "../components/toaster";
 import { NodeOntology, ontologyFromNodeOutputs, entityLabel, relationLabel } from "../api/ontologyTypes";
+import { FineTuneProgress } from "../components/FineTuneProgress";
 
 type Msg = {
   role: "user" | "assistant";
@@ -17,7 +18,23 @@ type Msg = {
   ontology?: NodeOntology[];
   knowledge?: { text: string; score: number; source: string }[];
   error?: string;
+  progress?: any;          // structured progress of long-running steps (fine-tuning)
 };
+
+const TERMINAL = ["succeeded", "failed", "awaiting_approval", "cancelled"];
+
+// Copy a run's settled result onto an assistant message (shared by live sends and resumed runs).
+function settle(msg: Msg, run: any) {
+  msg.pending = false;
+  msg.runId = run?.run_id || msg.runId;
+  msg.status = run?.status;
+  msg.error = run?.error || (!run ? "Timed out waiting for the workflow." : "");
+  msg.artifacts = run?.artifacts || [];
+  msg.text = run?.final_output || (run?.node_outputs?.slice(-1)[0]?.output) || "";
+  msg.steps = (run?.node_outputs || []).map((n: any) => ({ agent: n.agent, output: n.output }));
+  msg.ontology = ontologyFromNodeOutputs(run?.node_outputs);
+  if (run?.progress && Object.keys(run.progress).length) msg.progress = run.progress;
+}
 
 function estTokens(text: string): number {
   if (!text) return 0;
@@ -43,6 +60,8 @@ export function Chat() {
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const convRef = useRef<string | null>(null);        // conversation currently on screen
+  const watching = useRef<Set<string>>(new Set());    // runs already being polled
 
   useEffect(() => { api.listWorkflows().then((w) => { setWorkflows(w); setWfId((prev) => prev || w[0]?.workflow_id || ""); }); }, []);
   useEffect(() => { api.ragList().then((ps: any[]) => setPipelines(ps.filter((p) => p.status === "ready"))).catch(() => {}); }, []);
@@ -72,41 +91,104 @@ export function Chat() {
     try { await api.chatSaveMessages(convId, messages); refreshList(); } catch { /* ignore */ }
   };
 
-  const newChat = () => { setConvId(null); setMsgs([]); try { localStorage.removeItem("tcs_active_chat"); } catch {} };
+  const isLongRunning = (w?: Workflow) => !!(w as any)?.config?.long_running;
+  // client-side wait limit: unchanged 3 min for ordinary workflows; long-running workflows
+  // (fine-tuning) are bounded by the server's own run time limit instead
+  const waitLimitMs = (w?: Workflow) => isLongRunning(w)
+    ? (((w as any)?.config?.run_timeout_seconds || 86400) + 600) * 1000 : 180000;
+
+  const newChat = () => {
+    setConvId(null); convRef.current = null; setMsgs([]); setBusy(false); setActiveRun(null);
+    try { localStorage.removeItem("tcs_active_chat"); } catch {}
+  };
 
   const openConversation = async (cid: string) => {
     const conv = await api.chatGet(cid);
-    setConvId(conv.id);
-    setMsgs(conv.messages || []);
+    setConvId(conv.id); convRef.current = conv.id;
+    const messages: Msg[] = conv.messages || [];
+    setMsgs(messages);
     if (conv.workflow_id) setWfId(conv.workflow_id);
     try { localStorage.setItem("tcs_active_chat", conv.id); } catch {}
+    setBusy(false); setActiveRun(null);
+    // re-attach to a run that was still going when this conversation was left (e.g. a
+    // fine-tuning job): its progress is kept on the server, so pick it straight back up
+    const last = messages[messages.length - 1];
+    if (last && last.role === "assistant" && last.pending && last.runId) resumeRun(conv.id, last.runId, conv.workflow_id);
   };
 
-  const poll = (runId: string): Promise<any> =>
+  const poll = (runId: string, cid: string | null, limitMs = 180000): Promise<any> =>
     new Promise((resolve) => {
-      const iv = setInterval(async () => {
+      watching.current.add(runId);
+      const started = Date.now();
+      let interval = 1000;
+      const tick = async () => {
+        let r: any = null;
         try {
-          const r = await api.getRun(runId);
-          setMsgs((m) => {
-            const copy = [...m];
-            const last = copy[copy.length - 1];
-            if (last && last.role === "assistant" && last.pending) {
-              last.steps = (r.node_outputs || []).map((n: any) => ({ agent: n.agent, output: n.output }));
-              // surface ontology usage live as each agent completes (not just at the end)
-              const onto = ontologyFromNodeOutputs(r.node_outputs);
-              if (onto.length) last.ontology = onto;
-            }
-            return copy;
-          });
-          if (["succeeded", "failed", "awaiting_approval", "cancelled"].includes(r.status)) {
-            clearInterval(iv); resolve(r);
+          r = await api.getRun(runId);
+          if (convRef.current === cid) {
+            setMsgs((m) => {
+              const copy = [...m];
+              const last = copy[copy.length - 1];
+              if (last && last.role === "assistant" && last.pending && (!last.runId || last.runId === runId)) {
+                last.steps = (r.node_outputs || []).map((n: any) => ({ agent: n.agent, output: n.output }));
+                // surface ontology usage live as each agent completes (not just at the end)
+                const onto = ontologyFromNodeOutputs(r.node_outputs);
+                if (onto.length) last.ontology = onto;
+                if (r.progress && Object.keys(r.progress).length) last.progress = r.progress;
+              }
+              return copy;
+            });
           }
+          if (TERMINAL.includes(r.status)) { watching.current.delete(runId); resolve(r); return; }
         } catch { /* keep polling */ }
-      }, 1000);
-      setTimeout(() => { clearInterval(iv); resolve(null); }, 180000);
+        if (Date.now() - started > limitMs) { watching.current.delete(runId); resolve(null); return; }
+        // long-running runs report progress every few seconds server-side; no need to hammer
+        interval = r?.progress?.kind ? 3000 : 1000;
+        setTimeout(tick, interval);
+      };
+      setTimeout(tick, interval);
     });
 
+  // Settle a finished run into its conversation, even if another conversation is open now.
+  const settleInto = async (cid: string | null, runId: string, run: any) => {
+    if (cid && convRef.current === cid) {
+      let finalMsgs: Msg[] = [];
+      setMsgs((m) => {
+        const copy = [...m];
+        const idx = copy.map((x) => x.runId).lastIndexOf(runId);
+        const target = idx >= 0 ? copy[idx] : copy[copy.length - 1];
+        if (target && target.role === "assistant") settle(target, run);
+        finalMsgs = copy;
+        return copy;
+      });
+      if (cid) { await api.chatSaveMessages(cid, finalMsgs); refreshList(); }
+      setBusy(false); setActiveRun(null);
+    } else if (cid) {
+      try {
+        const conv = await api.chatGet(cid);
+        const messages: Msg[] = conv.messages || [];
+        const target = [...messages].reverse().find((x) => x.runId === runId);
+        if (target) { settle(target, run); await api.chatSaveMessages(cid, messages); refreshList(); }
+      } catch { /* ignore */ }
+    }
+  };
+
+  const resumeRun = async (cid: string, runId: string, workflowId?: string) => {
+    if (watching.current.has(runId)) { setBusy(true); setActiveRun(runId); return; }
+    let run: any = null;
+    try { run = await api.getRun(runId); } catch { /* run gone */ }
+    if (!run || TERMINAL.includes(run.status)) { await settleInto(cid, runId, run); return; }
+    setBusy(true); setActiveRun(runId);
+    // workflows may not be loaded yet (resume on page load): the run's own progress tells us
+    // it is a long-running job
+    const w = workflows.find((x) => x.workflow_id === (workflowId || run.workflow_id));
+    const long = isLongRunning(w) || !!run.progress?.kind;
+    const done = await poll(runId, cid, long ? waitLimitMs(w ?? ({ config: { long_running: true } } as any)) : 180000);
+    await settleInto(cid, runId, done);
+  };
+
   const stop = async () => { if (activeRun) { await api.cancelRun(activeRun); toast.info("Interrupting…"); } };
+  const stopRun = async (runId?: string) => { if (runId) { await api.cancelRun(runId); toast.info("Stopping the job…"); } };
 
   const send = async () => {
     const text = input.trim();
@@ -116,7 +198,7 @@ export function Chat() {
     // ensure a conversation exists to persist into
     let cid = convId;
     if (!cid) {
-      try { const c = await api.chatCreate(wfId, wf?.name || ""); cid = c.id; setConvId(c.id); try { localStorage.setItem("tcs_active_chat", c.id); } catch {} } catch { /* ignore */ }
+      try { const c = await api.chatCreate(wfId, wf?.name || ""); cid = c.id; setConvId(c.id); convRef.current = c.id; try { localStorage.setItem("tcs_active_chat", c.id); } catch {} } catch { /* ignore */ }
     }
 
     // Build history. Compression applies ONLY to the PREVIOUS conversation (not the new message).
@@ -166,21 +248,26 @@ export function Chat() {
     try {
       const res = await api.startRun(wfId, { message: groundedInput, input: groundedInput, history }, hops);
       setActiveRun(res.run_id);
-      const run = await poll(res.run_id);
-      let finalMsgs: Msg[] = [];
+      // remember the run on the pending reply right away and save it, so the conversation can
+      // pick the run back up after a reload / navigation (important for long fine-tuning jobs)
+      const pendingMsgs: Msg[] = withUser.map((m, i) => i === withUser.length - 1 ? { ...m, runId: res.run_id } : m);
       setMsgs((m) => {
         const copy = [...m];
         const last = copy[copy.length - 1];
+        if (last && last.role === "assistant" && last.pending) last.runId = res.run_id;
+        return copy;
+      });
+      if (cid) { try { await api.chatSaveMessages(cid, pendingMsgs); } catch { /* best effort */ } }
+      const run = await poll(res.run_id, cid, waitLimitMs(wf));
+      let finalMsgs: Msg[] = [];
+      const stillHere = convRef.current === cid;
+      setMsgs((m) => {
+        if (!stillHere) return m;
+        const copy = [...m];
+        const last = copy[copy.length - 1];
         if (last && last.role === "assistant") {
-          last.pending = false;
-          last.runId = run?.run_id;
-          last.status = run?.status;
-          last.error = run?.error || (!run ? "Timed out waiting for the workflow." : "");
-          last.artifacts = run?.artifacts || [];
-          last.text = run?.final_output || (run?.node_outputs?.slice(-1)[0]?.output) || "";
-          last.steps = (run?.node_outputs || []).map((n: any) => ({ agent: n.agent, output: n.output }));
-          // ontology data retrieved/used during this run (spec §2)
-          last.ontology = ontologyFromNodeOutputs(run?.node_outputs);
+          settle(last, run);
+          last.runId = run?.run_id || res.run_id;
           // knowledge passages retrieved for this answer (RAG citations)
           if (knowledge.length) last.knowledge = knowledge.map((h: any) => ({
             text: h.text, score: h.score, source: (h.metadata || {}).source || "" }));
@@ -189,9 +276,10 @@ export function Chat() {
         return copy;
       });
       // persist the settled conversation
-      if (cid) { await api.chatSaveMessages(cid, finalMsgs); refreshList(); }
+      if (stillHere) { if (cid) { await api.chatSaveMessages(cid, finalMsgs); refreshList(); } }
+      else await settleInto(cid, res.run_id, run);
     } catch (e: any) { toast.error(e.message); }
-    finally { setBusy(false); setActiveRun(null); }
+    finally { if (convRef.current === cid) { setBusy(false); setActiveRun(null); } }
   };
 
   return (
@@ -292,10 +380,14 @@ export function Chat() {
             Type a message below — it runs through the selected workflow and returns the final answer.
             Your conversation is saved to history automatically.
           </div>}
-          {msgs.map((m, i) => <Bubble key={i} m={m} />)}
-          {busy && <div style={{ display: "flex", gap: 8, alignItems: "center", color: "var(--muted)", padding: "8px 12px" }}>
+          {msgs.map((m, i) => <Bubble key={i} m={m} onStop={stopRun} />)}
+          {busy && !msgs[msgs.length - 1]?.progress?.kind && <div style={{ display: "flex", gap: 8, alignItems: "center", color: "var(--muted)", padding: "8px 12px" }}>
             <Spinner size={16} /> workflow running…
             <Button minimal small intent="danger" icon="stop" text="Stop" onClick={stop} />
+          </div>}
+          {busy && msgs[msgs.length - 1]?.progress?.kind && <div className="muted" style={{ fontSize: 12, padding: "4px 12px" }}>
+            <Icon icon="info-sign" size={12} /> Long-running job — progress is saved on the server. You can leave this page
+            or switch conversations and come back later; it will pick up where it is.
           </div>}
           <div ref={endRef} />
         </div>
@@ -397,7 +489,7 @@ function fmtWhen(iso?: string) {
                  : d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
 
-function Bubble({ m }: { m: Msg }) {
+function Bubble({ m, onStop }: { m: Msg; onStop?: (runId?: string) => void }) {
   const [open, setOpen] = useState(false);
   const [ontoOpen, setOntoOpen] = useState(false);
   const [kbOpen, setKbOpen] = useState(false);
@@ -410,16 +502,22 @@ function Bubble({ m }: { m: Msg }) {
           {mine ? "You" : "Workflow"}
         </div>
         <Card className={mine ? "chat-bubble-user" : "chat-bubble-assistant"} style={{ padding: "10px 14px" }}>
+          {!mine && m.progress?.kind === "finetune" && (
+            <div style={{ marginBottom: m.pending ? 0 : 10 }}>
+              <FineTuneProgress p={m.progress} status={m.pending ? "running" : m.status} error={m.error}
+                onStop={m.pending && m.runId ? () => onStop?.(m.runId) : undefined} compact={!m.pending} />
+            </div>
+          )}
           {mine ? <div style={{ whiteSpace: "pre-wrap" }}>{m.text}</div> : (
-            m.error ? <Callout intent="danger" icon="error" title="Run failed">{m.error}</Callout>
-              : m.pending ? <div className="muted"><span className="thinking-dots">working</span></div>
+            m.error && !(m.progress?.kind && m.text) ? <Callout intent="danger" icon="error" title="Run failed">{m.error}</Callout>
+              : m.pending ? (m.progress?.kind ? null : <div className="muted"><span className="thinking-dots">working</span></div>)
               : <Markdown text={m.text || "(no output)"} />
           )}
         </Card>
         {!mine && (m.steps?.length || m.artifacts?.length || m.ontology?.length || m.knowledge?.length) ? (
           <div style={{ marginTop: 4 }}>
             {m.artifacts?.map((a: any) => (
-              <a key={a.name} href={api.artifactUrl(m.runId!, a.name)} download style={{ marginRight: 8 }}>
+              <a key={a.name} href={a.path ? api.filesDownloadUrl(a.path) : api.artifactUrl(m.runId!, a.name)} download style={{ marginRight: 8 }}>
                 <Button minimal small icon="download" text={a.name} />
               </a>
             ))}
@@ -494,7 +592,7 @@ function Bubble({ m }: { m: Msg }) {
               <>
                 <Button minimal small icon="diagram-tree" rightIcon={open ? "chevron-up" : "chevron-down"}
                   text={`${m.steps.length} agent steps`} onClick={() => setOpen(!open)} />
-                <Collapse isOpen={open || !!m.pending}>
+                <Collapse isOpen={open || (!!m.pending && !m.progress?.kind)}>
                   <div style={{ borderLeft: "2px solid var(--border)", paddingLeft: 10, marginTop: 6 }}>
                     {m.steps.map((s, i) => (
                       <div key={i} style={{ marginBottom: 8 }}>

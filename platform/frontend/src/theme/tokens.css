@@ -235,3 +235,13 @@ body {
 .nav-group { display: flex; flex-direction: column; }
 .nav-rail .bp5-button.nav-sub { padding-left: 30px; font-size: 13px; }
 .nav-rail .bp5-button.nav-sub .bp5-icon { opacity: .85; }
+
+/* fine-tuning progress (components/FineTuneProgress.tsx) */
+@keyframes ft-spin { to { transform: rotate(360deg); } }
+.ft-spin { animation: ft-spin 1.6s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .ft-spin { animation: none; } }
+
+/* markdown tables (components/Markdown.tsx) */
+.md-table { border-collapse: collapse; margin: 6px 0 10px; font-size: 12px; max-width: 100%; display: block; overflow-x: auto; }
+.md-table th, .md-table td { border: 1px solid var(--border); padding: 4px 8px; text-align: left; vertical-align: top; }
+.md-table th { background: var(--panel); color: var(--muted); font-weight: 600; }

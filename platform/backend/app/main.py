@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import SETTINGS
-from .routers import (domain_ai, agents, bundles, chat, connectors, dsl, files, governance, insights, model_endpoints,
+from .routers import (domain_ai, agents, finetune, bundles, chat, connectors, dsl, files, governance, insights, model_endpoints,
                      monitoring, mcp, ontology, rag, runs, schedules, tools, workflows)
 from .seed import seed
 
@@ -68,6 +68,7 @@ app.include_router(files.router)
 app.include_router(chat.router)
 app.include_router(rag.router)
 app.include_router(domain_ai.router)
+app.include_router(finetune.router)
 
 
 @app.on_event("startup")
@@ -89,12 +90,25 @@ async def _startup():
     except Exception:
         pass
     import asyncio
+    # re-attach fine-tuning runs whose job is still running on a DSLab runtime
+    try:
+        from .finetune.resume import resume_detached
+        asyncio.create_task(resume_detached())
+    except Exception:
+        pass
     from .routers.schedules import scheduler_loop
     asyncio.create_task(scheduler_loop())
 
 
 @app.on_event("shutdown")
 async def _shutdown():
+    # long-running fine-tuning jobs keep running on their DSLab runtime: tell their monitors not
+    # to cancel the remote job when the backend stops (they are re-attached on the next start)
+    try:
+        from .finetune import SHUTTING_DOWN
+        SHUTTING_DOWN["value"] = True
+    except Exception:
+        pass
     # graceful: mark still-running work as interrupted so nothing is left dangling
     try:
         from .executor import recover_orphans

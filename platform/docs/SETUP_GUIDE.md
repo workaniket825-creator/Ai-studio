@@ -2261,3 +2261,18 @@ jupyter-mcp-tools`) and leave the token field blank. To use a token later, start
 empty token, tunnel binds 0.0.0.0, backend dep removed, apply command returned). The live container
 start of the official image and the host-Jupyter connection are the smoke test on your VM.
 
+
+## Fine-tuning notebook execution on DSLab (build 37)
+
+New **Fine-Tuning (DSLab)** template/workflow: describe a fine-tuning need in Chat or the template
+form; the planner agent picks a notebook from **File Storage › finetuning/notebooks**, the job runs
+detached on a DSLab runtime through the runtime's DSLab MCP server (5 new job tools), Chat shows
+live progress (cells, steps, loss, ETA, log, Stop), MLflow gets one run per job (experiment
+`finetuning`) and every artifact lands in **finetuning/runs/<run_id>/**.
+
+Setup checklist: enable Data Science Lab + register a runtime → set an MLflow URI reachable FROM
+the runtime (runtime settings or *File Storage › Fine-tuning settings*) → set `MLFLOW_UI_URL` for
+browser links → (optional) Model Endpoint for the planner/reporter → upload notebooks following
+`finetuning/notebooks/README.md`. Smoke-test with "run a quick smoke test" in Chat.
+
+Full details: `docs/FINETUNE_WORKFLOW.md`.

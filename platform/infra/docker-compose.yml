@@ -19,6 +19,7 @@ services:
     environment:
       - RUNTIME=${RUNTIME:-live}                       # live | adk
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - MLFLOW_UI_URL=${MLFLOW_UI_URL:-http://localhost:5000}   # browser link for fine-tuning runs
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:8080}
       # --- persistence backend: postgres (professional) with JSON fallback available ---
       - STORE_BACKEND=${STORE_BACKEND:-postgres}        # postgres | json

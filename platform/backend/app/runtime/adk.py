@@ -178,10 +178,33 @@ class AdkRuntime:
         prior = ""                                        # ALL upstream results, like live
         total_in = 0
         total_out = 0
+        # resume support (re-attached long-running run): skip nodes already recorded
+        done_nodes = {n.get("node_id") for n in run.node_outputs}
+        if done_nodes:
+            total_in, total_out = run.input_tokens, run.output_tokens
+            for n in run.node_outputs:
+                prior += f"\n[{n.get('agent')}]: {n.get('output', '')}"
 
         for step in plan:
             agent_name = step["agent"]
             node_id = step["node_id"]
+            if node_id in done_nodes:
+                continue
+
+            # platform step handlers (e.g. fine-tuning) — same shared seam as the live runtime
+            from .handlers import handler_of, run_handler_node
+            _h = handler_of(agent_name)
+            if _h:
+                run.input_tokens, run.output_tokens = total_in, total_out
+                ok = await run_handler_node(
+                    run=run, workflow=workflow, node_id=node_id, agent=agent_name, handler=_h,
+                    prior=prior,
+                    emit=lambda kind, label, **kw: self._emit(rid, kind, label=label, **kw))
+                total_in, total_out = run.input_tokens, run.output_tokens
+                if not ok:
+                    return
+                prior += f"\n[{agent_name}]: {run.node_outputs[-1]['output']}"
+                continue
             await self._emit(rid, ActivityKind.agent_enter, node_id=node_id,
                              agent=agent_name, detail={"agent": agent_name})
 

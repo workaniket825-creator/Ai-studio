@@ -195,6 +195,13 @@ def seed() -> None:
     except Exception as e:
         import logging
         logging.getLogger("seed").warning("jupyter/superset mcp seed skipped: %s", e)
+    # Fine-tuning notebook execution (folders, sample notebooks, agents, template) — idempotent
+    try:
+        from .finetune.seed import seed as seed_finetune
+        seed_finetune()
+    except Exception as e:
+        import logging
+        logging.getLogger("seed").warning("fine-tuning seed skipped: %s", e)
 
 
 def seed_mcp_observability() -> None:

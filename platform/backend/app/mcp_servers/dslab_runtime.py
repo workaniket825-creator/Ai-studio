@@ -240,5 +240,262 @@ def restart_kernel() -> str:
     return _call(go)
 
 
+# ------------------------------------------------------------------------------------------
+# Background notebook jobs (long-running work such as fine-tuning).
+#
+# A job lives in <jupyter root>/<JOBS_DIR>/<job_id>/ on the runtime. start_notebook_job copies
+# the Studio runner (app/finetune/remote_runner.py) there and launches it as a detached process
+# group with the kernel's Python, so the work survives dropped tunnels, MCP calls and backend
+# restarts. Progress is read from the job's status.json — cheap, no kernel round-trip.
+# ------------------------------------------------------------------------------------------
+import re as _re
+from datetime import datetime as _dt, timezone as _tz
+from pathlib import Path as _Path
+
+JOBS_DIR = os.getenv("DSLAB_JOBS_DIR", "studio-jobs").strip("/") or "studio-jobs"
+_JOB_ID = _re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
+_RUNNER_SRC = _Path(__file__).resolve().parents[1] / "finetune" / "remote_runner.py"
+_STALE_HEARTBEAT_S = 90
+
+
+def _job_dir(job_id: str) -> str:
+    if not _JOB_ID.match(job_id or ""):
+        raise LabError("invalid job_id (letters, digits, '_', '-', '.' only)")
+    return f"{JOBS_DIR}/{job_id}"
+
+
+def _safe_rel(name: str) -> str:
+    parts = [p for p in (name or "").replace("\\", "/").split("/") if p not in ("", ".")]
+    if not parts or any(p == ".." for p in parts):
+        raise LabError(f"invalid file name '{name}'")
+    return "/".join(parts)
+
+
+def _age_s(iso: str) -> float:
+    try:
+        return (_dt.now(_tz.utc) - _dt.fromisoformat(iso)).total_seconds()
+    except Exception:
+        return 1e9
+
+
+@server.tool()
+def stage_job_file(job_id: str, name: str, content: str, encoding: str = "text") -> str:
+    """Write a file into a background job's directory on the runtime (creates the directory).
+    encoding: 'text' for text/notebook JSON, 'base64' for binary data. Returns the saved path."""
+    def go():
+        jd = _job_dir(job_id)
+        rel = _safe_rel(name)
+        target = f"{jd}/{rel}"
+        client.mkdirs(target.rsplit("/", 1)[0])
+        if encoding == "base64":
+            client.put_base64(target, content)
+        else:
+            client.put_text(target, content)
+        return json.dumps({"ok": True, "path": target})
+    return _call(go)
+
+
+@server.tool()
+def start_notebook_job(job_id: str, notebook: str = "notebook.ipynb", env: dict | None = None,
+                       timeout_hours: float = 24.0, log_outputs_to_mlflow: bool = True,
+                       mlflow_max_gb: float = 20.0) -> str:
+    """Start a staged notebook as a detached background job on the runtime (survives disconnects).
+    The notebook must already be in the job directory (stage_job_file). `env` is added to the job's
+    environment (e.g. MLFLOW_TRACKING_URI, MLFLOW_RUN_ID). Poll with notebook_job_status."""
+    def go():
+        jd = _job_dir(job_id)
+        nb = _safe_rel(notebook)
+        if not client.exists(f"{jd}/{nb}"):
+            return json.dumps({"ok": False, "error": f"{jd}/{nb} not found - stage it first"})
+        client.put_text(f"{jd}/studio_runner.py", _RUNNER_SRC.read_text())
+        safe_env = {str(k): str(v) for k, v in (env or {}).items()}
+        code = textwrap.dedent(f"""
+            import json as _j, os as _o, subprocess as _sp, sys as _s
+            _jd = _o.path.abspath({jd!r})
+            _pid = _o.path.join(_jd, "job.pid")
+            def _alive(_pid):
+                # kill(pid, 0) also succeeds for zombies: reap our own child, check /proc state
+                try:
+                    _o.waitpid(_pid, _o.WNOHANG)
+                except Exception:
+                    pass
+                try:
+                    _o.kill(_pid, 0)
+                except Exception:
+                    return False
+                try:
+                    return open("/proc/%d/stat" % _pid).read().rsplit(")", 1)[1].split()[0] != "Z"
+                except Exception:
+                    return True
+            _running = False
+            if _o.path.exists(_pid):
+                try:
+                    _running = _alive(int(open(_pid).read().strip()))
+                except Exception:
+                    _running = False
+            if _running:
+                print(_j.dumps({{"ok": False, "error": "job is already running",
+                                 "pid": int(open(_pid).read().strip())}}))
+            else:
+                for _f in ("status.json", "outputs_manifest.json"):
+                    try: _o.remove(_o.path.join(_jd, _f))
+                    except FileNotFoundError: pass
+                _env = dict(_o.environ); _env.update({safe_env!r})
+                _env["PYTHONUNBUFFERED"] = "1"
+                _out = open(_o.path.join(_jd, "runner.out"), "ab")
+                _p = _sp.Popen([_s.executable, "-u", "studio_runner.py", "--notebook", {nb!r},
+                                "--output-notebook", "executed.ipynb",
+                                "--timeout-hours", str({float(timeout_hours)!r}),
+                                "--log-outputs-to-mlflow", str({int(bool(log_outputs_to_mlflow))}),
+                                "--mlflow-max-gb", str({float(mlflow_max_gb)!r})],
+                               cwd=_jd, env=_env, stdout=_out, stderr=_sp.STDOUT,
+                               stdin=_sp.DEVNULL, start_new_session=True)
+                open(_pid, "w").write(str(_p.pid))
+                import threading as _th
+                _th.Thread(target=_p.wait, daemon=True).start()   # reap on exit (no zombie)
+                print(_j.dumps({{"ok": True, "pid": _p.pid, "job_dir": _jd, "python": _s.executable}}))
+        """)
+        out = _run_in_agent_kernel(code, 60)
+        line = next((ln for ln in reversed(out.splitlines()) if ln.strip().startswith("{")), "")
+        return line or json.dumps({"ok": False, "error": out[-2000:]})
+    return _call(go)
+
+
+def _pid_alive(job_id: str) -> dict:
+    jd = _job_dir(job_id)
+    code = textwrap.dedent(f"""
+        import json as _j, os as _o
+        def _alive(_pid):
+            # kill(pid, 0) also succeeds for zombies: reap our own child, check /proc state
+            try:
+                _o.waitpid(_pid, _o.WNOHANG)
+            except Exception:
+                pass
+            try:
+                _o.kill(_pid, 0)
+            except Exception:
+                return False
+            try:
+                return open("/proc/%d/stat" % _pid).read().rsplit(")", 1)[1].split()[0] != "Z"
+            except Exception:
+                return True
+        _p = _o.path.join(_o.path.abspath({jd!r}), "job.pid")
+        try:
+            _pid = int(open(_p).read().strip())
+            print(_j.dumps({{"alive": _alive(_pid), "pid": _pid}}))
+        except Exception as _e:
+            print(_j.dumps({{"alive": False, "detail": str(_e)}}))
+    """)
+    out = _run_in_agent_kernel(code, 30)
+    line = next((ln for ln in reversed(out.splitlines()) if ln.strip().startswith("{")), "{}")
+    try:
+        return json.loads(line)
+    except Exception:
+        return {"alive": None, "detail": out[-300:]}
+
+
+@server.tool()
+def notebook_job_status(job_id: str) -> str:
+    """Status of a background notebook job: state (starting|running|finalizing|completed|failed|
+    cancelled|timeout|lost), current cell, progress bars, custom progress values and a log tail."""
+    def go():
+        jd = _job_dir(job_id)
+        try:
+            st = json.loads(client.read_text(f"{jd}/status.json") or "{}")
+        except LabError as e:
+            if "HTTP 404" not in str(e):
+                raise
+            st = {"state": "starting", "detail": "status.json not written yet"}
+            try:
+                st["runner_out"] = client.read_text(f"{jd}/runner.out")[-3000:]
+            except LabError:
+                pass
+            if not client.exists(f"{jd}/job.pid"):
+                st["state"] = "not_found"
+                return json.dumps(st)
+            # the runner died before it could write a status (e.g. bad interpreter)
+            if st.get("runner_out") and not _pid_alive(job_id).get("alive", True):
+                st["state"] = "lost"
+            return json.dumps(st)
+        if st.get("state") in ("starting", "running", "finalizing") \
+                and _age_s(st.get("heartbeat", "")) > _STALE_HEARTBEAT_S:
+            alive = _pid_alive(job_id)
+            if alive.get("alive") is False:
+                st["state"] = "lost"
+                st["error"] = ("the job process is gone without a final status (machine restart, "
+                               "OOM kill or manual kill)")
+                try:
+                    st["runner_out"] = client.read_text(f"{jd}/runner.out")[-3000:]
+                except LabError:
+                    pass
+        return json.dumps(st)
+    return _call(go)
+
+
+@server.tool()
+def cancel_notebook_job(job_id: str, grace_seconds: int = 20) -> str:
+    """Stop a background notebook job (SIGTERM to its process group, SIGKILL after grace_seconds)."""
+    def go():
+        jd = _job_dir(job_id)
+        code = textwrap.dedent(f"""
+            import json as _j, os as _o, signal as _sg, time as _t
+            _p = _o.path.join(_o.path.abspath({jd!r}), "job.pid")
+            try:
+                _pid = int(open(_p).read().strip())
+            except Exception as _e:
+                print(_j.dumps({{"ok": False, "error": "no pid file: " + str(_e)}})); raise SystemExit
+            def _alive(_pid):
+                # kill(pid, 0) also succeeds for zombies: reap our own child, check /proc state
+                try:
+                    _o.waitpid(_pid, _o.WNOHANG)
+                except Exception:
+                    pass
+                try:
+                    _o.kill(_pid, 0)
+                except Exception:
+                    return False
+                try:
+                    return open("/proc/%d/stat" % _pid).read().rsplit(")", 1)[1].split()[0] != "Z"
+                except Exception:
+                    return True
+            if not _alive(_pid):
+                print(_j.dumps({{"ok": True, "detail": "job was not running"}}))
+            else:
+                try: _o.killpg(_o.getpgid(_pid), _sg.SIGTERM)
+                except Exception: _o.kill(_pid, _sg.SIGTERM)
+                _d = _t.time() + {int(grace_seconds)}
+                while _alive(_pid) and _t.time() < _d: _t.sleep(0.5)
+                if _alive(_pid):
+                    try: _o.killpg(_o.getpgid(_pid), _sg.SIGKILL)
+                    except Exception: _o.kill(_pid, _sg.SIGKILL)
+                print(_j.dumps({{"ok": True, "detail": "stopped", "pid": _pid}}))
+        """)
+        out = _run_in_agent_kernel(code, int(grace_seconds) + 30)
+        line = next((ln for ln in reversed(out.splitlines()) if ln.strip().startswith("{")), "")
+        return line or json.dumps({"ok": False, "error": out[-1000:]})
+    return _call(go)
+
+
+@server.tool()
+def list_job_outputs(job_id: str) -> str:
+    """Files a background job produced under its outputs/ folder (path, size, sha256), plus the
+    job directory's own files (executed notebook, log, status)."""
+    def go():
+        jd = _job_dir(job_id)
+        out: dict = {"job_dir": jd}
+        try:
+            out["manifest"] = json.loads(client.read_text(f"{jd}/outputs_manifest.json") or "{}")
+        except LabError:
+            out["manifest"] = None
+        try:
+            out["job_files"] = [{"name": r["name"], "type": r["type"], "size": r.get("size")}
+                                for r in client.list_dir(jd)]
+        except LabError as e:
+            out["job_files"] = []
+            out["error"] = str(e)
+        return json.dumps(out)
+    return _call(go)
+
+
 if __name__ == "__main__":
     server.run(transport="stdio")

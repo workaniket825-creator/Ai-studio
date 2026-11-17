@@ -104,12 +104,16 @@ def read_bytes(rel: str) -> bytes:
     return p.read_bytes()
 
 
-def write_bytes(rel: str, data: bytes, actor: str = "user") -> dict:
+def write_bytes(rel: str, data: bytes, actor: str = "user", enforce_limits: bool = True) -> dict:
+    """Write a file inside the storage root. `enforce_limits=False` is for platform-generated
+    outputs (e.g. fine-tuned model files pulled back from DSLab), which have their own size
+    caps; the path is still confined to the root either way."""
     name = Path(rel).name
-    _check_ext(name)
-    max_bytes = config()["max_file_kb"] * 1024
-    if len(data) > max_bytes:
-        raise StorageError(f"file exceeds max size ({config()['max_file_kb']} KB)")
+    if enforce_limits:
+        _check_ext(name)
+        max_bytes = config()["max_file_kb"] * 1024
+        if len(data) > max_bytes:
+            raise StorageError(f"file exceeds max size ({config()['max_file_kb']} KB)")
     p = _resolve(rel)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(data)
@@ -117,8 +121,33 @@ def write_bytes(rel: str, data: bytes, actor: str = "user") -> dict:
     return {"name": p.name, "path": str(p.relative_to(root())), "size": st.st_size}
 
 
-def write_text(rel: str, content: str, actor: str = "agent") -> dict:
-    return write_bytes(rel, content.encode(), actor)
+def write_text(rel: str, content: str, actor: str = "agent", enforce_limits: bool = True) -> dict:
+    return write_bytes(rel, content.encode(), actor, enforce_limits=enforce_limits)
+
+
+def stat(rel: str) -> dict | None:
+    p = _resolve(rel)
+    if not p.exists():
+        return None
+    st = p.stat()
+    return {"name": p.name, "path": str(p.relative_to(root())), "size": st.st_size,
+            "modified": st.st_mtime, "type": "folder" if p.is_dir() else "file"}
+
+
+def walk(prefix: str = "", limit: int = 2000) -> list[dict]:
+    """Recursive file listing under a prefix (files only), confined to the root."""
+    base = _resolve(prefix)
+    out: list[dict] = []
+    if not base.exists():
+        return out
+    for p in sorted(base.rglob("*")):
+        if p.is_file():
+            st = p.stat()
+            out.append({"name": p.name, "path": str(p.relative_to(root())), "size": st.st_size,
+                        "modified": st.st_mtime})
+            if len(out) >= limit:
+                break
+    return out
 
 
 def delete(rel: str) -> bool:

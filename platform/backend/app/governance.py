@@ -39,6 +39,9 @@ _DEFAULT = {
     "platform": {
         "max_concurrent_runs": 5,          # bounded run concurrency
         "run_timeout_seconds": 180,        # per-run wall-clock limit
+        # long-running workflows (config.long_running, e.g. fine-tuning) use their own lane
+        "long_run_timeout_seconds": 86400,  # 24 h unless the workflow sets run_timeout_seconds
+        "max_concurrent_long_runs": 2,     # separate from max_concurrent_runs
         "retry_attempts": 2,               # transient model/tool retries
         "retry_backoff_seconds": 2,        # base backoff between retries
         "max_request_kb": 512,             # request/spec payload cap

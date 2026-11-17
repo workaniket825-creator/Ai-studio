@@ -282,6 +282,13 @@ export const api = {
   dfmDelete: (id: string) => send(`/domain-ai/dfm/assessments/${id}`, "DELETE"),
   dfmAiReport: (id: string, body: object) => send(`/domain-ai/dfm/assessments/${id}/ai-report`, "POST", body),
   dfmWord: (id: string, body: object) => send(`/domain-ai/dfm/assessments/${id}/word`, "POST", body),
+  // Fine-tuning notebook execution on DSLab (workflow "Fine-Tuning (DSLab)")
+  ftConfig: () => getJson("/finetune/config"),
+  ftSetConfig: (body: object) => send("/finetune/config", "PUT", body),
+  ftCatalog: () => getJson("/finetune/catalog"),
+  ftRuntimes: () => getJson("/finetune/runtimes"),
+  ftProgress: (runId: string) => getJson(`/finetune/runs/${runId}/progress`),
+  ftRuns: () => getJson("/finetune/runs"),
   addEndpoint: (data: object) => send("/model-endpoints", "POST", data),
   deleteEndpoint: (id: string) => send(`/model-endpoints/${id}`, "DELETE"),
   testEndpoint: (id: string) => send(`/model-endpoints/${id}/test`, "POST"),

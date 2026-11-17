@@ -87,6 +87,17 @@ def download_artifact(run_id: str, name: str):
     from ..analysis import ARTIFACTS_DIR
     path = Path(ARTIFACTS_DIR) / run_id / name
     if not path.exists():
+        # artifacts kept in File Storage (e.g. fine-tuning run folders) carry their own path
+        r = runs_repo.get(run_id) or {}
+        a = next((x for x in r.get("artifacts", []) if x.get("name") == name and x.get("path")), None)
+        if a:
+            from .. import filestore
+            try:
+                fp = filestore._resolve(a["path"])
+                if fp.is_file():
+                    return FileResponse(str(fp), filename=name)
+            except filestore.StorageError:
+                pass
         raise HTTPException(404, "artifact not found")
     return FileResponse(str(path), filename=name)
 
